@@ -4,7 +4,7 @@ import {
   LayoutDashboard, Package, BarChart3, Bell, Settings, X,
   Archive, ShoppingCart, ShoppingBag, RotateCcw, BookOpen,
   Users, Truck, ReceiptText, UserCheck, AlertTriangle,
-  CreditCard, LogOut, Store, Sparkles, CheckCircle2,
+  CreditCard, LogOut, Store, CheckCircle2,
 } from 'lucide-react';
 import { useInteraction } from '@/hooks/useInteraction';
 import { cn } from '@/lib/utils';
@@ -29,7 +29,7 @@ const allNavItems = [
   { path: '/damages',     icon: AlertTriangle,    label: 'الهوالك والتالف', roles: ['admin','warehouse_manager','boss'] },
   { path: '/workers',     icon: UserCheck,        label: 'العمال',          roles: ['admin','warehouse_manager','boss'] },
   { path: '/reports',     icon: BarChart3,        label: 'التقارير',        roles: ['admin','warehouse_manager','boss'] },
-  { path: '/ai',          icon: Sparkles,         label: 'المساعد الذكي',   roles: ['admin','warehouse_manager','driver','boss','worker'] },
+
   { path: '/alerts',      icon: Bell,             label: 'التنبيهات',       roles: ['admin','warehouse_manager','boss'] },
   { path: '/my-account',  icon: CreditCard,       label: 'حسابي',           roles: ['worker'] },
   { path: '/settings',    icon: Settings,         label: 'الإعدادات',       roles: ['admin','warehouse_manager'] },

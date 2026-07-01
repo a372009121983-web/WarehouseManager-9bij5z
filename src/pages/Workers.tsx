@@ -10,7 +10,7 @@ import { FunctionsHttpError } from '@supabase/supabase-js';
 import { useAuth } from '@/contexts/AuthContext';
 import { can } from '@/lib/permissions';
 
-const EGP = (v: number) => v.toLocaleString('ar-EG', { minimumFractionDigits: 2 }) + ' ج.م';
+const EGP = (v: unknown) => { const n = Number(v) || 0; return n.toLocaleString('ar-EG', { minimumFractionDigits: 2 }) + ' ج.م'; };
 
 interface Worker {
   id: string;
@@ -72,7 +72,7 @@ const Workers = () => {
   const [pwdLoading, setPwdLoading] = useState(false);
 
   const [showAddForm, setShowAddForm] = useState(false);
-  const [addForm, setAddForm]         = useState({ phone: '', full_name: '', role: 'worker', max_salary: 0 });
+  const [addForm, setAddForm]         = useState({ phone: '', full_name: '', role: 'worker', max_salary: 0, password: '', showPwd: false });
   const [tempPwd, setTempPwd]         = useState('');
 
   const [txnWorker, setTxnWorker] = useState<Worker | null>(null);
@@ -124,7 +124,7 @@ const Workers = () => {
   const addWorkerMutation = useMutation({
     mutationFn: async () => {
       const { data, error } = await supabase.functions.invoke('create-worker', {
-        body: { phone: addForm.phone, full_name: addForm.full_name, role: addForm.role, max_salary: addForm.max_salary },
+        body: { phone: addForm.phone, full_name: addForm.full_name, role: addForm.role, max_salary: addForm.max_salary, password: addForm.password },
       });
       if (error) {
         let msg = error.message;
@@ -133,13 +133,14 @@ const Workers = () => {
         }
         throw new Error(msg);
       }
-      return data as { tempPassword?: string };
+      return data as { success?: boolean };
     },
-    onSuccess: (data) => {
+    onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['workers'] });
       interact('success');
-      if (data?.tempPassword) setTempPwd(data.tempPassword);
       toast.success('تم إنشاء حساب العامل بنجاح');
+      setShowAddForm(false);
+      setAddForm({ phone: '', full_name: '', role: 'worker', max_salary: 0, password: '', showPwd: false });
     },
     onError: (e: Error) => { interact('error'); toast.error(e.message); },
   });
@@ -470,62 +471,69 @@ const Workers = () => {
         <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
           <div className="bg-white w-full max-w-md rounded-2xl border border-border shadow-xl p-6 animate-fade-up">
             <h2 className="text-lg font-bold text-foreground mb-5">إضافة عامل جديد</h2>
-            {tempPwd ? (
-              <div className="space-y-4">
-                <div className="bg-emerald-50 rounded-xl p-4 border border-emerald-200">
-                  <p className="text-sm font-bold text-emerald-700 mb-2">✓ تم إنشاء الحساب بنجاح!</p>
-                  <p className="text-xs text-emerald-700 mb-1">كلمة المرور المؤقتة (شاركها مع العامل):</p>
-                  <p className="font-mono text-lg font-bold text-emerald-800 bg-white px-3 py-2 rounded-lg border border-emerald-200 text-center tracking-widest">{tempPwd}</p>
-                  <p className="text-[11px] text-emerald-600 mt-2">يدخل العامل برقم هاتفه وكلمة المرور هذه، ويمكنه تغييرها لاحقاً.</p>
+            <div className="space-y-3">
+              {([{ label: 'رقم الهاتف *', key: 'phone', type: 'tel' }, { label: 'الاسم الكامل *', key: 'full_name', type: 'text' }] as const).map(f => (
+                <div key={f.key} className="flex flex-col gap-1">
+                  <label className="text-xs text-muted-foreground">{f.label}</label>
+                  <input type={f.type} value={String(addForm[f.key])}
+                    onChange={e => setAddForm(p => ({ ...p, [f.key]: e.target.value }))}
+                    placeholder={f.key === 'phone' ? '01XXXXXXXXX' : ''}
+                    className="bg-white border border-border rounded-xl py-2.5 px-3 text-sm text-foreground focus:outline-none focus:border-primary/50" />
                 </div>
-                <button className="w-full gradient-blue text-white rounded-xl py-2.5 font-semibold"
-                  onClick={() => { setShowAddForm(false); setTempPwd(''); setAddForm({ phone: '', full_name: '', role: 'worker', max_salary: 0 }); }}>
-                  تم
-                </button>
-              </div>
-            ) : (
-              <>
-                <div className="space-y-3">
-                  {([{ label: 'رقم الهاتف *', key: 'phone', type: 'tel' }, { label: 'الاسم الكامل *', key: 'full_name', type: 'text' }] as const).map(f => (
-                    <div key={f.key} className="flex flex-col gap-1">
-                      <label className="text-xs text-muted-foreground">{f.label}</label>
-                      <input type={f.type} value={String(addForm[f.key])}
-                        onChange={e => setAddForm(p => ({ ...p, [f.key]: e.target.value }))}
-                        placeholder={f.key === 'phone' ? '01XXXXXXXXX' : ''}
-                        className="bg-white border border-border rounded-xl py-2.5 px-3 text-sm text-foreground focus:outline-none focus:border-primary/50" />
-                    </div>
-                  ))}
-                  <div className="grid grid-cols-2 gap-3">
-                    <div className="flex flex-col gap-1">
-                      <label className="text-xs text-muted-foreground">الوظيفة</label>
-                      <select value={addForm.role} onChange={e => setAddForm(p => ({ ...p, role: e.target.value }))}
-                        className="bg-white border border-border rounded-xl py-2.5 px-3 text-sm text-foreground focus:outline-none focus:border-primary/50">
-                        <option value="worker">عامل</option>
-                        <option value="warehouse_manager">مدير مخزن</option>
-                        <option value="driver">سائق</option>
-                        <option value="admin">مدير النظام</option>
-                        <option value="boss">الرئيس (مشاهدة فقط)</option>
-                      </select>
-                    </div>
-                    <div className="flex flex-col gap-1">
-                      <label className="text-xs text-muted-foreground">الحد الأقصى (ج.م)</label>
-                      <input type="number" value={addForm.max_salary || ''}
-                        onChange={e => setAddForm(p => ({ ...p, max_salary: Number(e.target.value) }))}
-                        className="bg-white border border-border rounded-xl py-2.5 px-3 text-sm text-foreground focus:outline-none focus:border-primary/50" />
-                    </div>
-                  </div>
-                </div>
-                <div className="flex gap-3 mt-4">
-                  <button className="flex-1 gradient-blue text-white rounded-xl py-2.5 font-semibold"
-                    onClick={() => { if (!addForm.phone || !addForm.full_name) { toast.error('يرجى تعبئة الحقول المطلوبة'); return; } addWorkerMutation.mutate(); }}
-                    disabled={addWorkerMutation.isPending}>
-                    {addWorkerMutation.isPending ? 'جاري الإنشاء...' : 'إنشاء الحساب'}
+              ))}
+              {/* حقل كلمة المرور */}
+              <div className="flex flex-col gap-1">
+                <label className="text-xs text-muted-foreground">كلمة المرور *</label>
+                <div className="relative">
+                  <input
+                    type={addForm.showPwd ? 'text' : 'password'}
+                    value={addForm.password || ''}
+                    onChange={e => setAddForm(p => ({ ...p, password: e.target.value }))}
+                    placeholder="6 أحرف على الأقل"
+                    className="w-full bg-white border border-border rounded-xl py-2.5 pr-3 pl-9 text-sm text-foreground focus:outline-none focus:border-primary/50" />
+                  <button type="button"
+                    className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                    onClick={() => setAddForm(p => ({ ...p, showPwd: !p.showPwd }))}>
+                    {addForm.showPwd ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                   </button>
-                  <button className="flex-1 bg-muted text-muted-foreground rounded-xl py-2.5"
-                    onClick={() => { interact('click'); setShowAddForm(false); }}>إلغاء</button>
                 </div>
-              </>
-            )}
+                {addForm.password && addForm.password.length < 6 && (
+                  <p className="text-xs text-red-500">كلمة المرور يجب أن تكون 6 أحرف على الأقل</p>
+                )}
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div className="flex flex-col gap-1">
+                  <label className="text-xs text-muted-foreground">الوظيفة</label>
+                  <select value={addForm.role} onChange={e => setAddForm(p => ({ ...p, role: e.target.value }))}
+                    className="bg-white border border-border rounded-xl py-2.5 px-3 text-sm text-foreground focus:outline-none focus:border-primary/50">
+                    <option value="worker">عامل</option>
+                    <option value="warehouse_manager">مدير مخزن</option>
+                    <option value="driver">سائق</option>
+                    <option value="admin">مدير النظام</option>
+                    <option value="boss">الرئيس (مشاهدة فقط)</option>
+                  </select>
+                </div>
+                <div className="flex flex-col gap-1">
+                  <label className="text-xs text-muted-foreground">الحد الأقصى (ج.م)</label>
+                  <input type="number" value={addForm.max_salary || ''}
+                    onChange={e => setAddForm(p => ({ ...p, max_salary: Number(e.target.value) }))}
+                    className="bg-white border border-border rounded-xl py-2.5 px-3 text-sm text-foreground focus:outline-none focus:border-primary/50" />
+                </div>
+              </div>
+            </div>
+            <div className="flex gap-3 mt-4">
+              <button className="flex-1 gradient-blue text-white rounded-xl py-2.5 font-semibold"
+                onClick={() => {
+                  if (!addForm.phone || !addForm.full_name) { toast.error('يرجى تعبئة الحقول المطلوبة'); return; }
+                  if (!addForm.password || addForm.password.length < 6) { toast.error('يرجى إدخال كلمة مرور 6 أحرف على الأقل'); return; }
+                  addWorkerMutation.mutate();
+                }}
+                disabled={addWorkerMutation.isPending}>
+                {addWorkerMutation.isPending ? 'جاري الإنشاء...' : 'إنشاء الحساب'}
+              </button>
+              <button className="flex-1 bg-muted text-muted-foreground rounded-xl py-2.5"
+                onClick={() => { interact('click'); setShowAddForm(false); }}>إلغاء</button>
+            </div>
           </div>
         </div>
       )}

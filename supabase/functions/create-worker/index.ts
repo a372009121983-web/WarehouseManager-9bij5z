@@ -84,7 +84,7 @@ Deno.serve(async (req: Request) => {
       });
     }
 
-    const { phone, full_name, role, max_salary } = body;
+    const { phone, full_name, role, max_salary, password } = body;
 
     if (!phone || !full_name) {
       return new Response(JSON.stringify({ error: 'رقم الهاتف والاسم مطلوبان' }), {
@@ -93,13 +93,16 @@ Deno.serve(async (req: Request) => {
       });
     }
 
+    if (!password || password.length < 6) {
+      return new Response(JSON.stringify({ error: 'كلمة المرور مطلوبة (6 أحرف على الأقل)' }), {
+        status: 400,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
+    const workerPassword = password;
     const email = phoneToEmail(phone);
     const cleanPhone = phone.replace(/\D/g, '');
-
-    const chars = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
-    let randomPwd = '';
-    for (let i = 0; i < 8; i++) randomPwd += chars[Math.floor(Math.random() * chars.length)];
-    randomPwd += '1!';
 
     console.log(`Creating worker: phone=${phone}, email=${email}, role=${role}, owner_id=${ownerId}`);
 
@@ -124,7 +127,7 @@ Deno.serve(async (req: Request) => {
 
     const { data: signUpData, error: signUpErr } = await supabaseAnon.auth.signUp({
       email,
-      password: randomPwd,
+      password: workerPassword,
       options: {
         data: {
           full_name,
@@ -176,7 +179,6 @@ Deno.serve(async (req: Request) => {
     return new Response(JSON.stringify({
       success: true,
       userId,
-      tempPassword: randomPwd,
       message: 'تم إنشاء الحساب بنجاح',
     }), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },

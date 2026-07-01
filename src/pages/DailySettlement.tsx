@@ -12,7 +12,7 @@ import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 import { can } from '@/lib/permissions';
 
-const EGP = (v: number) => v.toLocaleString('ar-EG', { minimumFractionDigits: 2 }) + ' ج.م';
+const EGP = (v: unknown) => { const n = Number(v) || 0; return n.toLocaleString('ar-EG', { minimumFractionDigits: 2 }) + ' ج.م'; };
 const today = () => new Date().toISOString().split('T')[0];
 const INPUT = 'app-input';
 
@@ -59,11 +59,13 @@ const DailySettlement = () => {
   const { data: sales = [], isLoading, refetch } = useQuery({
     queryKey: ['settlement-sales', selectedDate],
     queryFn: async () => {
+      // جلب فواتير يوم المحدد + كل الفواتير الآجلة المترحّلة من أيام سابقة
       const { data, error } = await supabase
         .from('sales')
         .select('*, sale_items(id, product_name, quantity, unit, unit_price, total_price)')
-        .eq('sale_date', selectedDate)
-        .in('status', ['معلقة', 'مؤجلة', 'جزئي'])
+        .in('status', ['معلقة', 'مؤجلة', 'جزئي', 'آجل'])
+        .lte('sale_date', selectedDate)
+        .order('sale_date', { ascending: true })
         .order('created_at', { ascending: true });
       if (error) throw error;
       return data || [];

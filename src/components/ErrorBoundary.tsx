@@ -9,20 +9,33 @@ interface Props {
 interface State {
   hasError: boolean;
   error: Error | null;
+  errorCount: number;
 }
 
 class ErrorBoundary extends Component<Props, State> {
+  private resetTimer: ReturnType<typeof setTimeout> | null = null;
+
   constructor(props: Props) {
     super(props);
-    this.state = { hasError: false, error: null };
+    this.state = { hasError: false, error: null, errorCount: 0 };
   }
 
-  static getDerivedStateFromError(error: Error): State {
+  static getDerivedStateFromError(error: Error): Partial<State> {
     return { hasError: true, error };
   }
 
   componentDidCatch(error: Error, info: ErrorInfo) {
-    console.error('ErrorBoundary caught:', error, info.componentStack);
+    console.error('ErrorBoundary caught:', error.message, info.componentStack?.slice(0, 200));
+    // إصلاح ذاتي تلقائي للأخطاء البسيطة بعد 2 ثانية
+    if (this.state.errorCount < 2) {
+      this.resetTimer = setTimeout(() => {
+        this.setState(prev => ({ hasError: false, error: null, errorCount: prev.errorCount + 1 }));
+      }, 2000);
+    }
+  }
+
+  componentWillUnmount() {
+    if (this.resetTimer) clearTimeout(this.resetTimer);
   }
 
   handleReset = () => {
@@ -42,6 +55,9 @@ class ErrorBoundary extends Component<Props, State> {
           <p className="text-sm text-muted-foreground mb-5 max-w-sm">
             في مشكلة تقنية بسيطة. اضغط "إعادة المحاولة" أو أعد تحميل الصفحة.
           </p>
+          {this.state.errorCount < 2 && (
+            <p className="text-xs text-blue-500 mb-3">يتم الإصلاح التلقائي...</p>
+          )}
           {this.state.error && (
             <p className="text-xs text-red-400 font-mono bg-red-50 border border-red-200 rounded-xl px-3 py-2 mb-4 max-w-sm break-all">
               {this.state.error.message}

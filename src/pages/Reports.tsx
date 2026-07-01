@@ -13,8 +13,8 @@ import { printUnifiedReport } from '@/lib/printInvoice';
 
 type Tab = 'inventory' | 'shortages' | 'movement' | 'inbound' | 'outbound' | 'financial' | 'profit' | 'damaged' | 'workers' | 'showrooms';
 
-const EGP = (v: number) => v.toLocaleString('ar-EG', { minimumFractionDigits: 0 }) + ' ج.م';
-const fmt = (v: number) => v.toLocaleString('ar-EG');
+const fmt = (n: unknown) => { const v = Number(n) || 0; return v.toLocaleString('ar-EG'); };
+const EGP = (v: unknown) => { const n = Number(v) || 0; return n.toLocaleString('ar-EG', { minimumFractionDigits: 0 }) + ' ج.م'; };
 
 const TABS: { id: Tab; label: string; icon: ElementType; color: string; bg: string; desc: string }[] = [
   { id: 'inventory', label: 'جرد المخزون',   icon: Archive,       color: 'text-blue-700',   bg: 'bg-blue-50 border-blue-200',   desc: 'كميات المنتجات الحالية' },

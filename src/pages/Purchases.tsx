@@ -14,7 +14,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { can } from '@/lib/permissions';
 import { printInvoice } from '@/lib/printInvoice';
 
-const EGP = (v: number) => v.toLocaleString('ar-EG', { minimumFractionDigits: 2 }) + ' ج.م';
+const EGP = (v: unknown) => { const n = Number(v) || 0; return n.toLocaleString('ar-EG', { minimumFractionDigits: 2 }) + ' ج.م'; };
 const today = () => new Date().toISOString().split('T')[0];
 const INPUT = 'w-full bg-white border border-slate-200 rounded-xl py-2.5 px-3 text-sm text-slate-800 placeholder:text-slate-400 focus:outline-none focus:border-violet-400 focus:ring-2 focus:ring-violet-100 transition-all';
 const INPUT_SM = 'w-full bg-white border border-slate-200 rounded-lg py-1.5 px-2 text-xs text-slate-800 placeholder:text-slate-400 focus:outline-none focus:border-violet-400 transition-all';

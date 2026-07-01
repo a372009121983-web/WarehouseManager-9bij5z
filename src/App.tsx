@@ -34,13 +34,21 @@ import Warehouses from "@/pages/Warehouses";
 import CustomerDetail from "@/pages/CustomerDetail";
 import SupplierDetail from "@/pages/SupplierDetail";
 import ShowroomDetail from "@/pages/ShowroomDetail";
-import AIAssistant from "@/pages/AIAssistant";
 import DailySettlement from "@/pages/DailySettlement";
 import NotFound from "@/pages/NotFound";
 
 const queryClient = new QueryClient({
   defaultOptions: {
-    queries: { retry: 1, staleTime: 60000, refetchOnWindowFocus: false },
+    queries: {
+      retry: 2,
+      staleTime: 30000,
+      refetchOnWindowFocus: false,
+      // تحسين الأداء: تجنب إعادة الجلب التلقائية المتكررة
+      refetchOnReconnect: 'always',
+    },
+    mutations: {
+      retry: 1,
+    },
   },
 });
 
@@ -154,7 +162,7 @@ const AppRoutes = () => {
         <Route path="/damages"      element={<RoleRoute path="/damages"><Damages /></RoleRoute>} />
         <Route path="/workers"      element={<RoleRoute path="/workers"><Workers /></RoleRoute>} />
         <Route path="/reports"      element={<RoleRoute path="/reports"><Reports /></RoleRoute>} />
-        <Route path="/ai"           element={<RoleRoute path="/ai"><AIAssistant /></RoleRoute>} />
+
         <Route path="/alerts"       element={<RoleRoute path="/alerts"><Alerts /></RoleRoute>} />
         <Route path="/settings"     element={<RoleRoute path="/settings"><Settings /></RoleRoute>} />
         <Route path="/my-account"   element={<RoleRoute path="/my-account"><WorkerSelf /></RoleRoute>} />

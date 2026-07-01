@@ -1,6 +1,6 @@
 import { useState, useMemo, useEffect } from 'react';
 import {
-  BookOpen, Plus, Trash2, Printer,
+  BookOpen, Trash2, Printer, Edit2,
   TrendingUp, TrendingDown, Wallet, CreditCard,
   ArrowUpCircle, Clock, DollarSign,
   Building2, ChevronDown, ChevronUp, FileDown, Smartphone,
@@ -15,9 +15,9 @@ import { cn } from '@/lib/utils';
 import { printInvoice, buildDailySalesPrintHTML } from '@/lib/printInvoice';
 import type { DailyTxnRow } from '@/lib/printInvoice';
 
-const fmt  = (v: number) => v.toLocaleString('ar-EG', { minimumFractionDigits: 2 });
-const EGP  = (v: number) => fmt(v) + ' ج.م';
-const fmtQ = (v: number) => v.toLocaleString('ar-EG');
+const fmt  = (v: unknown) => { const n = Number(v) || 0; return n.toLocaleString('ar-EG', { minimumFractionDigits: 2 }); };
+const EGP  = (v: unknown) => fmt(v) + ' ج.م';
+const fmtQ = (v: unknown) => { const n = Number(v) || 0; return n.toLocaleString('ar-EG'); };
 const toDateStr = (d: Date) => d.toISOString().split('T')[0];
 
 /* ── Per-item sale row ── */
@@ -1115,12 +1115,10 @@ const Daily = () => {
           </div>
           <div className="flex items-center gap-3">
             <span className="font-bold text-sm text-red-600">{EGP(totalExpenses + totalWorkerAdv + totalWorkerSal)}</span>
-            {!isReadOnly && (
-              <button onClick={() => { interact('add'); setShowExpenseForm(true); }}
+                        {!isReadOnly && (              <button onClick={() => { interact('add'); setShowExpenseForm(true); }}
                 className="flex items-center gap-1 px-2.5 py-1.5 bg-red-50 hover:bg-red-100 text-red-600 border border-red-200 rounded-xl text-xs font-semibold transition-all">
-                <Plus className="w-3 h-3" />إضافة
-              </button>
-            )}
+                <span>+ إضافة</span>
+              </button>            )}
           </div>
         </div>
 
