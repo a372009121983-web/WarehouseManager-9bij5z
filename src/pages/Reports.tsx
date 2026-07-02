@@ -11,7 +11,7 @@ import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { printUnifiedReport } from '@/lib/printInvoice';
 
-type Tab = 'inventory' | 'shortages' | 'movement' | 'inbound' | 'outbound' | 'financial' | 'profit' | 'damaged' | 'workers' | 'showrooms';
+type Tab = 'inventory' | 'shortages' | 'movement' | 'inbound' | 'outbound' | 'financial' | 'profit' | 'damaged' | 'workers' | 'showrooms' | 'reconciliation';
 
 const fmt = (n: unknown) => { const v = Number(n) || 0; return v.toLocaleString('ar-EG'); };
 const EGP = (v: unknown) => { const n = Number(v) || 0; return n.toLocaleString('ar-EG', { minimumFractionDigits: 0 }) + ' ج.م'; };
@@ -26,7 +26,8 @@ const TABS: { id: Tab; label: string; icon: ElementType; color: string; bg: stri
   { id: 'outbound',  label: 'الصادر',         icon: TrendingDown,  color: 'text-amber-700',  bg: 'bg-amber-50 border-amber-200',  desc: 'جميع فواتير المبيعات' },
   { id: 'financial', label: 'التقييم المالي', icon: DollarSign,    color: 'text-teal-700',   bg: 'bg-teal-50 border-teal-200',   desc: 'قيمة المخزون والربح المحتمل' },
   { id: 'damaged',   label: 'الهالك',         icon: Trash2,        color: 'text-red-700',    bg: 'bg-red-50 border-red-200',     desc: 'سجلات التالف والمفقود' },
-  { id: 'workers',   label: 'تقرير العمال',  icon: Users,         color: 'text-slate-700',  bg: 'bg-slate-50 border-slate-200', desc: 'المرتبات والسلف والمستحقات' },
+  { id: 'workers',        label: 'تقرير العمال',      icon: Users,         color: 'text-slate-700',  bg: 'bg-slate-50 border-slate-200', desc: 'المرتبات والسلف والمستحقات' },
+  { id: 'reconciliation', label: 'توفيق المخزون',  icon: BarChart3,     color: 'text-cyan-700',   bg: 'bg-cyan-50 border-cyan-200',   desc: 'مقارنة المشتريات والمبيعات والعجز والخسائر' },
 ];
 
 const SC: Record<string, string> = {
@@ -142,6 +143,111 @@ const Reports = () => {
   const { data: workersData = [] }      = useQuery({ queryKey: ['workers-report'],     queryFn: async () => { const { data } = await supabase.from('user_profiles').select('id,full_name,username,email,role,phone,active,max_salary').order('full_name'); return (data ?? []) as any[]; }, staleTime: 60000 });
   const { data: workerTxns = [] }       = useQuery({ queryKey: ['worker-txns-report'], queryFn: async () => { const { data } = await supabase.from('worker_transactions').select('*').order('transaction_date', { ascending: false }); return (data ?? []) as any[]; }, staleTime: 60000 });
   const { data: damages = [] }          = useQuery({ queryKey: ['damages'],            queryFn: async () => { const { data } = await supabase.from('damages').select('*').order('damage_date', { ascending: false }); return (data ?? []) as any[]; }, staleTime: 30000 });
+
+  /* ── Reconciliation data ── */
+  const { data: allPurchaseItems = [] } = useQuery({
+    queryKey: ['recon-pi'],
+    queryFn: async () => {
+      const { data } = await supabase.from('purchase_items').select('product_id, product_name, quantity, unit_price');
+      return (data ?? []) as any[];
+    },
+    staleTime: 60000,
+  });
+
+  const { data: allSaleItems = [] } = useQuery({
+    queryKey: ['recon-si'],
+    queryFn: async () => {
+      const { data } = await supabase.from('sale_items').select('product_id, product_name, quantity, unit_price');
+      return (data ?? []) as any[];
+    },
+    staleTime: 60000,
+  });
+
+  const { data: allDamagesItems = [] } = useQuery({
+    queryKey: ['recon-damages'],
+    queryFn: async () => {
+      const { data } = await supabase.from('damages').select('product_name, quantity, unit_cost');
+      return (data ?? []) as any[];
+    },
+    staleTime: 30000,
+  });
+
+  const { data: currentInventory = [] } = useQuery({
+    queryKey: ['recon-inv'],
+    queryFn: async () => {
+      const { data } = await supabase.from('inventory')
+        .select('product_id, quantity, products(name, purchase_price)');
+      return (data ?? []) as any[];
+    },
+    staleTime: 30000,
+  });
+
+  /* ── Reconciliation calculation ── */
+  const reconciliationData = useMemo(() => {
+    // Build maps
+    const purchased: Record<string, { name: string; qty: number; cost: number }> = {};
+    allPurchaseItems.forEach((pi: any) => {
+      if (!pi.product_id) return;
+      if (!purchased[pi.product_id]) purchased[pi.product_id] = { name: pi.product_name || '—', qty: 0, cost: pi.unit_price || 0 };
+      purchased[pi.product_id].qty += pi.quantity || 0;
+    });
+
+    const sold: Record<string, number> = {};
+    allSaleItems.forEach((si: any) => {
+      if (!si.product_id) return;
+      sold[si.product_id] = (sold[si.product_id] || 0) + (si.quantity || 0);
+    });
+
+    const damaged: Record<string, number> = {};
+    allDamagesItems.forEach((d: any) => {
+      // damages by product_name only, match by name
+    });
+
+    const actual: Record<string, number> = {};
+    currentInventory.forEach((inv: any) => {
+      if (!inv.product_id) return;
+      actual[inv.product_id] = (actual[inv.product_id] || 0) + (inv.quantity || 0);
+    });
+
+    const prodMap: Record<string, { name: string; pp: number }> = {};
+    currentInventory.forEach((inv: any) => {
+      if (!inv.product_id) return;
+      prodMap[inv.product_id] = {
+        name: (inv.products as any)?.name || '—',
+        pp: (inv.products as any)?.purchase_price || 0,
+      };
+    });
+    // also add from purchased
+    Object.entries(purchased).forEach(([id, p]) => {
+      if (!prodMap[id]) prodMap[id] = { name: p.name, pp: p.cost };
+    });
+
+    return Object.entries(prodMap)
+      .filter(([id]) => (purchased[id]?.qty || 0) > 0 || (actual[id] || 0) > 0)
+      .map(([id, prod]) => {
+        const purchasedQty = purchased[id]?.qty || 0;
+        const soldQty = sold[id] || 0;
+        const expectedQty = purchasedQty - soldQty;
+        const actualQty = actual[id] || 0;
+        const deficit = Math.max(0, expectedQty - actualQty);
+        const surplus = Math.max(0, actualQty - expectedQty);
+        const unitCost = prod.pp || purchased[id]?.cost || 0;
+        const deficitValue = deficit * unitCost;
+        return {
+          id, name: prod.name, purchasedQty, soldQty, expectedQty, actualQty,
+          deficit, surplus, unitCost, deficitValue,
+        };
+      })
+      .filter(r => !search || r.name.includes(search))
+      .sort((a, b) => b.deficitValue - a.deficitValue);
+  }, [allPurchaseItems, allSaleItems, currentInventory, search]);
+
+  const totalPurchasedQty = reconciliationData.reduce((s, r) => s + r.purchasedQty, 0);
+  const totalSoldQty = reconciliationData.reduce((s, r) => s + r.soldQty, 0);
+  const totalExpectedQty = reconciliationData.reduce((s, r) => s + r.expectedQty, 0);
+  const totalActualQty = reconciliationData.reduce((s, r) => s + r.actualQty, 0);
+  const totalDeficit = reconciliationData.reduce((s, r) => s + r.deficit, 0);
+  const totalDeficitValue = reconciliationData.reduce((s, r) => s + r.deficitValue, 0);
 
   const { data: showroomInvData = [] } = useQuery({
     queryKey: ['showroom-inv-report'],
@@ -457,7 +563,7 @@ const Reports = () => {
       </div>
 
       {/* ── Tabs Grid ── */}
-      <div className="grid grid-cols-5 sm:grid-cols-5 lg:grid-cols-10 gap-2">
+      <div className="grid grid-cols-6 sm:grid-cols-6 lg:grid-cols-11 gap-1.5">
         {TABS.map(tab => {
           const Icon = tab.icon;
           const isActive = activeTab === tab.id;
@@ -774,6 +880,71 @@ const Reports = () => {
                 ))}
                 {damages.length===0&&<tr><td colSpan={7} className="px-4 py-10 text-center text-slate-400 text-sm">لا توجد سجلات</td></tr>}
               </tbody>
+            </table>
+          </TblBox>
+        </div>
+      )}
+
+      {/* Reconciliation */}
+      {activeTab === 'reconciliation' && (
+        <div className="space-y-4 animate-fade-up">
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+            <KPI label="إجمالي المشتريات" value={fmt(totalPurchasedQty)} border="border-violet-200" text="text-violet-700" />
+            <KPI label="إجمالي المبيعات" value={fmt(totalSoldQty)} border="border-amber-200" text="text-amber-700" />
+            <KPI label="المخزون المتوقع" value={fmt(totalExpectedQty)} border="border-blue-200" text="text-blue-700" sub={`فعلي: ${fmt(totalActualQty)}`} />
+            <KPI label="إجمالي العجز" value={fmt(totalDeficit)} border="border-red-200" text="text-red-700" sub={EGP(totalDeficitValue)} />
+          </div>
+          <div className="bg-cyan-50 border border-cyan-200 rounded-2xl p-4">
+            <p className="text-xs text-cyan-700 font-semibold mb-1">ℹ️ كيفية الحساب:</p>
+            <p className="text-xs text-cyan-600">مخزون متوقع = إجمالي مشتريات − إجمالي مبيعات ┆ العجز = متوقع − فعلي ┆ الخسارة = عجز × سعر الشراء</p>
+          </div>
+          <TblBox>
+            <SectionHeader icon={BarChart3} title="توفيق المخزون" count={reconciliationData.length} />
+            <table className="daily-table min-w-[700px]">
+              <Thead cols={['اسم المنتج', 'مشتريات', 'مبيعات', 'متوقع', 'فعلي', 'عجز', 'فائض', 'سعر الشراء', 'خسارة العجز']} gradient="linear-gradient(135deg,#0e7490,#0891b2)" />
+              <tbody>
+                {reconciliationData.map((r, i) => (
+                  <tr key={r.id} className={cn('border-b border-slate-50 hover:bg-slate-50/60', r.deficit > 0 ? 'bg-red-50/30' : r.surplus > 0 ? 'bg-emerald-50/30' : '')}>
+                    <td className="px-3 py-2.5 font-bold text-sm text-slate-800 whitespace-nowrap">{r.name}</td>
+                    <td className="px-3 py-2.5 font-bold text-sm text-violet-600 text-center whitespace-nowrap">{fmt(r.purchasedQty)}</td>
+                    <td className="px-3 py-2.5 font-bold text-sm text-amber-600 text-center whitespace-nowrap">{fmt(r.soldQty)}</td>
+                    <td className="px-3 py-2.5 font-bold text-sm text-blue-600 text-center whitespace-nowrap">{fmt(r.expectedQty)}</td>
+                    <td className="px-3 py-2.5 font-bold text-sm text-slate-700 text-center whitespace-nowrap">{fmt(r.actualQty)}</td>
+                    <td className="px-3 py-2.5 text-center whitespace-nowrap">
+                      {r.deficit > 0
+                        ? <span className="font-black text-sm text-red-600">{fmt(r.deficit)}</span>
+                        : <span className="text-slate-300">—</span>}
+                    </td>
+                    <td className="px-3 py-2.5 text-center whitespace-nowrap">
+                      {r.surplus > 0
+                        ? <span className="font-black text-sm text-emerald-600">+{fmt(r.surplus)}</span>
+                        : <span className="text-slate-300">—</span>}
+                    </td>
+                    <td className="px-3 py-2.5 text-sm text-slate-400 whitespace-nowrap">{r.unitCost > 0 ? EGP(r.unitCost) : '—'}</td>
+                    <td className="px-3 py-2.5 text-center whitespace-nowrap">
+                      {r.deficitValue > 0
+                        ? <span className="font-black text-sm text-red-600">{EGP(r.deficitValue)}</span>
+                        : <span className="text-emerald-500 text-xs font-semibold">✔ لا خسارة</span>}
+                    </td>
+                  </tr>
+                ))}
+                {reconciliationData.length === 0 && (
+                  <tr><td colSpan={9} className="px-4 py-10 text-center text-slate-400 text-sm">لا توجد بيانات — تأكد من إدخال بيانات المشتريات والمبيعات</td></tr>
+                )}
+              </tbody>
+              <tfoot>
+                <tr style={{ background: 'linear-gradient(135deg,#0e7490,#0891b2)' }}>
+                  <td className="px-3 py-3 text-xs font-bold text-white">{reconciliationData.length} صنف</td>
+                  <td className="px-3 py-3 text-center font-black text-white whitespace-nowrap">{fmt(totalPurchasedQty)}</td>
+                  <td className="px-3 py-3 text-center font-black text-white whitespace-nowrap">{fmt(totalSoldQty)}</td>
+                  <td className="px-3 py-3 text-center font-black text-white whitespace-nowrap">{fmt(totalExpectedQty)}</td>
+                  <td className="px-3 py-3 text-center font-black text-white whitespace-nowrap">{fmt(totalActualQty)}</td>
+                  <td className="px-3 py-3 text-center font-black text-red-200 whitespace-nowrap">{totalDeficit > 0 ? fmt(totalDeficit) : '—'}</td>
+                  <td className="px-3 py-3 text-center font-black text-emerald-200 whitespace-nowrap">{fmt(reconciliationData.reduce((s, r) => s + r.surplus, 0))}</td>
+                  <td />
+                  <td className="px-3 py-3 text-center font-black text-red-200 whitespace-nowrap">{totalDeficitValue > 0 ? EGP(totalDeficitValue) : '✔ لا خسائر'}</td>
+                </tr>
+              </tfoot>
             </table>
           </TblBox>
         </div>

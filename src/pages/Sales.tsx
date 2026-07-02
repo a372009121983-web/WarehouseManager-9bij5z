@@ -627,7 +627,7 @@ const Sales = () => {
             <thead>
               <tr style={{ background: 'linear-gradient(135deg,#1d6b6b 0%,#2a8f8f 100%)' }}>
                 <th className="tbl-head">المنتج</th>
-                <th className="tbl-head">النوع</th>
+                <th className="tbl-head text-center">العدد</th>
                 <th className="tbl-head">الطرف</th>
                 <th className="tbl-head hidden lg:table-cell">التكلفة</th>
                 <th className="tbl-head">الإجمالي</th>
@@ -654,11 +654,15 @@ const Sales = () => {
                         {sItems.length === 0 && <span className="text-xs text-slate-400">{sale.sale_date}</span>}
                       </div>
                     </td>
-                    <td className="px-4 py-3">
-                      <span className={cn('text-[10px] px-2 py-0.5 rounded-full font-semibold border',
-                        invoiceType === 'شراء' ? 'bg-violet-50 text-violet-700 border-violet-200' : 'bg-teal-50 text-teal-700 border-teal-200')}>
-                        {invoiceType === 'شراء' ? '↓ شراء' : '↑ بيع'}
+                    <td className="px-4 py-3 text-center">
+                      <span className="font-bold text-sm text-slate-700">
+                        {sItems.reduce((s, it) => s + (it.quantity || 0), 0) > 0
+                          ? sItems.reduce((s, it) => s + (it.quantity || 0), 0).toLocaleString('ar-EG')
+                          : '—'}
                       </span>
+                      {sItems.length > 0 && (
+                        <p className="text-[10px] text-slate-400">{sItems.length} صنف</p>
+                      )}
                     </td>
                     <td className="px-4 py-3" style={{whiteSpace:'nowrap'}}>
                       <p className="font-bold text-sm text-slate-800" style={{whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis',maxWidth:'120px'}}>{sale.customer_name || 'نقدي'}</p>

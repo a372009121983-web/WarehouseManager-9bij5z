@@ -872,10 +872,22 @@ const Daily = () => {
 
                         {idx === 0 ? (
                           <td rowSpan={rowSpan} className="text-center align-middle">
-                            <button onClick={() => openInvoicePrint(sale)}
-                              className="w-7 h-7 bg-teal-50 hover:bg-teal-100 text-teal-600 rounded-lg border border-teal-200 flex items-center justify-center mx-auto transition-all">
-                              <Printer className="w-3.5 h-3.5" />
-                            </button>
+                            <div className="flex flex-col items-center gap-1">
+                              <button onClick={() => openInvoicePrint(sale)}
+                                className="w-7 h-7 bg-teal-50 hover:bg-teal-100 text-teal-600 rounded-lg border border-teal-200 flex items-center justify-center mx-auto transition-all" title="طباعة">
+                                <Printer className="w-3.5 h-3.5" />
+                              </button>
+                              {!isReadOnly && (
+                                <button
+                                  onClick={() => {
+                                    interact('click');
+                                    window.location.href = '/settlement';
+                                  }}
+                                  className="w-7 h-7 bg-amber-50 hover:bg-amber-100 text-amber-600 rounded-lg border border-amber-200 flex items-center justify-center mx-auto transition-all" title="تعديل الفاتورة">
+                                  <Edit2 className="w-3 h-3" />
+                                </button>
+                              )}
+                            </div>
                           </td>
                         ) : null}
                       </tr>
