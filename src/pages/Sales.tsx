@@ -2,7 +2,7 @@ import { useState, useCallback, useMemo } from 'react';
 import {
   ShoppingCart, Plus, Trash2, Search, Printer, Eye, Package,
   CreditCard, CheckCircle, Clock, X, Calendar, Edit2,
-  Wallet, Smartphone, Hash, Lock,
+  Wallet, Smartphone, Hash, Lock, AlertCircle,
 } from 'lucide-react';
 import { useInteraction } from '@/hooks/useInteraction';
 import { toast } from 'sonner';
@@ -21,11 +21,10 @@ const INPUT_SM = 'w-full bg-white border border-slate-200 rounded-lg py-1.5 px-2
 const BTN_PRIMARY = 'btn-primary';
 const BTN_SECONDARY = 'btn-secondary';
 
-/** حساب الحالة التلقائية — 4 حالات ثابتة فقط */
+/** حساب الحالة التلقائية */
 const calcAutoStatus = (total: number, paid: number) =>
   total <= 0 ? 'كاملة' : paid <= 0 ? 'معلقة' : paid >= total ? 'كاملة' : 'جزئي';
 
-/** حساب الحالة النهائية */
 const resolveStatus = (total: number, paid: number, manualStatus?: string | null): string => {
   if (paid >= total && total > 0) return 'كاملة';
   if (manualStatus) {
@@ -45,6 +44,7 @@ interface FormItem {
   total_price: number;
   unit: string;
   source: string;
+  _orig_qty?: number; // الكمية الأصلية (للتعديل)
 }
 let _id = 0;
 const newItem = (): FormItem => ({ id: String(++_id), product_name: '', quantity: 1, unit_price: 0, total_price: 0, unit: '', source: 'inventory' });
@@ -84,18 +84,16 @@ const Sales = () => {
   const [showPayment, setShowPayment] = useState<Sale | null>(null);
   const [saleItems, setSaleItems] = useState<FormItem[]>([]);
   const [form, setForm] = useState({
-    customer_id: '', customer_name: '', paid_amount: 0, discount: 0,
+    customer_id: '', customer_name: '', paid_amount: 0, discount: 0, extra_amount: 0,
     notes: '', sale_date: today(),
     manual_status: '' as string,
     payment_method: 'كاش' as 'كاش' | 'محفظة',
-    wallet_from: '',
-    wallet_to: '',
+    wallet_from: '', wallet_to: '',
   });
   const [paymentForm, setPaymentForm] = useState({
     amount: 0, notes: '', payment_date: today(),
     payment_method: 'كاش' as 'كاش' | 'محفظة',
-    wallet_from: '',
-    wallet_to: '',
+    wallet_from: '', wallet_to: '',
   });
 
   /* ── Queries ── */
@@ -173,9 +171,11 @@ const Sales = () => {
         }
       }
 
-      const total = saleItems.reduce((s, i) => s + i.total_price, 0) - form.discount;
-      const cashPaidNow = Math.max(0, Math.min(form.paid_amount, total));
-      const finalStatus = resolveStatus(total, cashPaidNow, form.manual_status || null);
+      const itemsTotal = saleItems.reduce((s, i) => s + i.total_price, 0);
+      const total = itemsTotal - form.discount + (form.extra_amount || 0);
+      // السماح بالمدفوع أكبر من الإجمالي
+      const cashPaidNow = Math.max(0, form.paid_amount);
+      const finalStatus = cashPaidNow >= total ? 'كاملة' : resolveStatus(total, cashPaidNow, form.manual_status || null);
       const customerName = customers.find((c: any) => c.id === form.customer_id)?.name || 'عميل نقدي';
 
       const { data: saleData, error: saleErr } = await supabase.from('sales').insert({
@@ -185,6 +185,7 @@ const Sales = () => {
         paid_amount: cashPaidNow,
         initial_paid_amount: cashPaidNow,
         discount: form.discount,
+        extra_amount: form.extra_amount || 0,
         status: finalStatus,
         notes: form.notes,
         sale_date: form.sale_date,
@@ -197,10 +198,11 @@ const Sales = () => {
       if (saleErr) throw saleErr;
 
       if (saleItems.length > 0) {
-        const rows = saleItems.map(({ id: _id, source: _src, ...it }) => ({ ...it, sale_id: saleData.id }));
+        const rows = saleItems.map(({ id: _id, source: _src, _orig_qty: _o, ...it }) => ({ ...it, sale_id: saleData.id }));
         await supabase.from('sale_items').insert(rows);
       }
 
+      // تحديث دين العميل فقط إذا المدفوع أقل من الإجمالي
       const debtAmount = total - cashPaidNow;
       if (debtAmount > 0 && saleData.customer_id) {
         const { data: cust } = await supabase.from('customers').select('balance').eq('id', saleData.customer_id).single();
@@ -238,20 +240,24 @@ const Sales = () => {
     onError: (e: Error) => { interact('error'); toast.error(e.message); },
   });
 
-  /* ── Payment Mutation ── */
+  /* ── Payment Mutation — تحديث الفاتورة تلقائياً حتى تكتمل ── */
   const paymentMutation = useMutation({
     mutationFn: async () => {
       if (!showPayment) return;
-      const remaining = showPayment.total_amount - showPayment.paid_amount;
       if (paymentForm.amount <= 0) throw new Error('يرجى إدخال مبلغ صحيح أكبر من صفر');
-      if (paymentForm.amount > remaining) throw new Error(`المبلغ أكبر من المتبقي (${EGP(remaining)})`);
+
+      const remaining = showPayment.total_amount - showPayment.paid_amount;
 
       if (showPayment.customer_id) {
-        const { data: cust } = await supabase.from('customers').select('balance').eq('id', showPayment.customer_id).single();
-        if (cust) {
-          await supabase.from('customers').update({
-            balance: Math.max(0, (cust.balance || 0) - paymentForm.amount),
-          }).eq('id', showPayment.customer_id);
+        // تسجيل دفعة وتحديث رصيد العميل
+        if (paymentForm.amount <= remaining) {
+          // دفعة جزئية أو كاملة — خصم من رصيد العميل
+          const { data: cust } = await supabase.from('customers').select('balance').eq('id', showPayment.customer_id).single();
+          if (cust) {
+            await supabase.from('customers').update({
+              balance: Math.max(0, (cust.balance || 0) - paymentForm.amount),
+            }).eq('id', showPayment.customer_id);
+          }
         }
         await supabase.from('customer_payments').insert({
           customer_id:    showPayment.customer_id,
@@ -265,9 +271,11 @@ const Sales = () => {
           wallet_to:      paymentForm.payment_method === 'محفظة' ? paymentForm.wallet_to   : null,
           sale_id:        showPayment.id,
         });
+        // trigger سيحدث paid_amount و status تلقائياً
       } else {
-        const newPaid = Math.min(showPayment.total_amount, showPayment.paid_amount + paymentForm.amount);
-        const finalStatus = resolveStatus(showPayment.total_amount, newPaid, (showPayment as any).manual_status || null);
+        // بدون عميل — تحديث مباشر مع السماح بدفع زيادة
+        const newPaid = showPayment.paid_amount + paymentForm.amount;
+        const finalStatus = newPaid >= showPayment.total_amount ? 'كاملة' : newPaid > 0 ? 'جزئي' : 'معلقة';
         await supabase.from('sales').update({ paid_amount: newPaid, status: finalStatus }).eq('id', showPayment.id);
       }
     },
@@ -283,7 +291,7 @@ const Sales = () => {
     onError: (e: Error) => { interact('error'); toast.error(e.message); },
   });
 
-  /* ── Delete Sale Mutation ── */
+  /* ── Delete Sale Mutation — إعادة الكميات للمخزون ── */
   const deleteMutation = useMutation({
     mutationFn: async (sale: Sale) => {
       const items = ((sale as any).sale_items || []) as SaleItem[];
@@ -316,24 +324,44 @@ const Sales = () => {
     },
   });
 
-  /* ── Update Sale Mutation ── */
+  /* ── Update Sale Mutation — مع استعادة الكميات المحذوفة ── */
   const updateSaleMutation = useMutation({
     mutationFn: async () => {
       if (!editSale) return;
       if (!form.customer_id) throw new Error('يرجى اختيار العميل أولاً');
 
-      const total = saleItems.reduce((s, i) => s + i.total_price, 0) - form.discount;
-      const paidClamped = Math.max(0, Math.min(form.paid_amount, total));
-      const newRemaining = total - paidClamped;
-      const finalStatus = resolveStatus(total, paidClamped, form.manual_status || null);
+      const oldItems = ((editSale as any).sale_items || []) as any[];
+      const itemsTotal = saleItems.reduce((s, i) => s + i.total_price, 0);
+      const total = itemsTotal - form.discount + (form.extra_amount || 0);
+      // السماح بالمدفوع أكبر من الإجمالي
+      const paidClamped = Math.max(0, form.paid_amount);
+      const newRemaining = Math.max(0, total - paidClamped);
+      const finalStatus = paidClamped >= total ? 'كاملة' : resolveStatus(total, paidClamped, form.manual_status || null);
       const customerName = customers.find((c: any) => c.id === form.customer_id)?.name || editSale.customer_name || 'عميل نقدي';
 
+      // 1) حذف أصناف الفاتورة القديمة وإعادة كمياتها للمخزون
+      for (const oldItem of oldItems) {
+        if (!oldItem.product_id) continue;
+        const { data: wh } = await supabase.from('warehouses').select('id').order('created_at', { ascending: true }).limit(1).maybeSingle();
+        if (wh) {
+          const { data: existing } = await supabase.from('inventory').select('id, quantity').eq('product_id', oldItem.product_id).eq('warehouse_id', wh.id).maybeSingle();
+          if (existing) {
+            await supabase.from('inventory').update({ quantity: existing.quantity + oldItem.quantity, last_updated: new Date().toISOString() }).eq('id', existing.id);
+          } else {
+            await supabase.from('inventory').insert({ product_id: oldItem.product_id, warehouse_id: wh.id, quantity: oldItem.quantity });
+          }
+        }
+      }
+
+      // 2) تحديث رأس الفاتورة
       const { error: saleErr } = await supabase.from('sales').update({
         customer_id: form.customer_id || null,
         customer_name: customerName,
         total_amount: total,
         paid_amount: paidClamped,
+        initial_paid_amount: paidClamped,
         discount: form.discount,
+        extra_amount: form.extra_amount || 0,
         status: finalStatus,
         notes: form.notes,
         sale_date: form.sale_date,
@@ -345,12 +373,27 @@ const Sales = () => {
       }).eq('id', editSale.id);
       if (saleErr) throw saleErr;
 
+      // 3) حذف وإعادة إدراج الأصناف الجديدة
       await supabase.from('sale_items').delete().eq('sale_id', editSale.id);
       if (saleItems.length > 0) {
-        const rows = saleItems.map(({ id: _id, source: _src, ...it }) => ({ ...it, sale_id: editSale.id }));
+        const rows = saleItems.map(({ id: _id, source: _src, _orig_qty: _o, ...it }) => ({ ...it, sale_id: editSale.id }));
         await supabase.from('sale_items').insert(rows);
       }
 
+      // 4) خصم الكميات الجديدة من المخزون
+      for (const item of saleItems) {
+        if (!item.product_id) continue;
+        const { data: invRows } = await supabase.from('inventory').select('id, quantity').eq('product_id', item.product_id).order('quantity', { ascending: false });
+        let rem = item.quantity;
+        for (const inv of (invRows || [])) {
+          if (rem <= 0) break;
+          const deduct = Math.min(rem, inv.quantity);
+          await supabase.from('inventory').update({ quantity: inv.quantity - deduct, last_updated: new Date().toISOString() }).eq('id', inv.id);
+          rem -= deduct;
+        }
+      }
+
+      // 5) تحديث رصيد العميل
       if (editSale.customer_id) {
         const oldRemaining = Math.max(0, editSale.total_amount - editSale.paid_amount);
         const { data: cust } = await supabase.from('customers').select('balance').eq('id', editSale.customer_id).single();
@@ -363,6 +406,8 @@ const Sales = () => {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['sales'] });
       qc.invalidateQueries({ queryKey: ['customers'] });
+      qc.invalidateQueries({ queryKey: ['sales-inventory-totals'] });
+      qc.invalidateQueries({ queryKey: ['inventory-all'] });
       interact('success');
       toast.success('تم تحديث الفاتورة');
       setShowForm(false);
@@ -403,12 +448,14 @@ const Sales = () => {
       total_price: it.total_price,
       unit: it.unit || '',
       source: 'inventory',
+      _orig_qty: it.quantity,
     })));
     setForm({
       customer_id: sale.customer_id || '',
       customer_name: sale.customer_name || '',
       paid_amount: sale.paid_amount,
       discount: sale.discount || 0,
+      extra_amount: (sale as any).extra_amount || 0,
       notes: (sale as any).notes || '',
       sale_date: sale.sale_date,
       manual_status: (sale as any).manual_status || '',
@@ -439,8 +486,10 @@ const Sales = () => {
     return mS && mSt && mD;
   }), [sales, search, filterStatus, rangeFrom, rangeTo]);
 
-  const totalAmount = saleItems.reduce((s, i) => s + i.total_price, 0) - form.discount;
-  const liveStatus = resolveStatus(totalAmount, form.paid_amount, form.manual_status || null);
+  const itemsTotal = saleItems.reduce((s, i) => s + i.total_price, 0);
+  const totalAmount = itemsTotal - form.discount + (form.extra_amount || 0);
+  const liveStatus = form.paid_amount >= totalAmount && totalAmount > 0 ? 'كاملة' : resolveStatus(totalAmount, form.paid_amount, form.manual_status || null);
+  const overpaid = form.paid_amount > totalAmount && totalAmount > 0;
   const pendingSales = useMemo(() => sales.filter(s => ['معلقة','مؤجلة','جزئي'].includes(s.status) && s.sale_date === today()), [sales]);
   const deferredTotal = sales.filter(s => ['آجل','جزئي','معلقة','مؤجلة'].includes(s.status)).reduce((s, x) => s + (x.total_amount - x.paid_amount), 0);
   const deferredOldSales = sales.filter(s => (s.status === 'آجل' || s.status === 'مؤجلة' || s.status === 'جزئي') && s.sale_date < today());
@@ -450,23 +499,14 @@ const Sales = () => {
     const items = ((sale as any).sale_items || []) as SaleItem[];
     const invNum = sale.id?.slice(-8).toUpperCase() || 'INV';
     printInvoice({
-      type: 'sale',
-      invoiceDate: sale.sale_date,
-      invoiceNumber: invNum,
-      status: sale.status,
+      type: 'sale', invoiceDate: sale.sale_date, invoiceNumber: invNum, status: sale.status,
       partyName: sale.customer_name || 'عميل نقدي',
       items: items.map(it => ({
-        name: it.product_name,
-        quantity: it.quantity,
-        unit: it.unit || '',
-        unit_price: it.unit_price,
-        total_price: it.total_price,
+        name: it.product_name, quantity: it.quantity, unit: it.unit || '',
+        unit_price: it.unit_price, total_price: it.total_price,
         purchase_price: products.find((p: any) => p.id === (it as any).product_id)?.purchase_price,
       })),
-      totalAmount: sale.total_amount,
-      paidAmount: sale.paid_amount,
-      discount: sale.discount || 0,
-      showProfit: true,
+      totalAmount: sale.total_amount, paidAmount: sale.paid_amount, discount: sale.discount || 0, showProfit: true,
     });
   };
 
@@ -612,7 +652,7 @@ const Sales = () => {
               interact('add');
               setEditSale(null);
               setSaleItems([]);
-              setForm({ customer_id: '', customer_name: '', paid_amount: 0, discount: 0, notes: '', sale_date: today(), manual_status: '', payment_method: 'كاش', wallet_from: '', wallet_to: '' });
+              setForm({ customer_id: '', customer_name: '', paid_amount: 0, discount: 0, extra_amount: 0, notes: '', sale_date: today(), manual_status: '', payment_method: 'كاش', wallet_from: '', wallet_to: '' });
               setShowForm(true);
             }}>
             <Plus className="w-4 h-4" /><span>فاتورة جديدة</span>
@@ -642,7 +682,7 @@ const Sales = () => {
                 const cfg = STATUS_CONFIG[sale.status] || { label: sale.status, className: 'text-slate-600 bg-slate-100 border-slate-200' };
                 const cost = getPurchaseCost(sale);
                 const profit = cost > 0 ? sale.total_amount - cost : null;
-                const invoiceType = (sale as any).invoice_type || 'بيع';
+                const overpaidAmt = sale.paid_amount - sale.total_amount;
                 return (
                   <tr key={sale.id} className="tbl-row animate-fade-up" style={{ animationDelay: `${Math.min(i, 8) * 30}ms` }}>
                     <td className="px-4 py-3">
@@ -671,9 +711,11 @@ const Sales = () => {
                     <td className="px-4 py-3 text-sm text-slate-400 hidden lg:table-cell" style={{whiteSpace:'nowrap'}}>{cost > 0 ? EGP(cost) : '—'}</td>
                     <td className="px-4 py-3">
                       <p className="font-bold text-sm text-emerald-600 whitespace-nowrap">{EGP(sale.total_amount)}</p>
-                      {sale.total_amount !== sale.paid_amount && (
+                      {overpaidAmt > 0 ? (
+                        <p className="text-xs text-blue-600 font-semibold whitespace-nowrap">دفع زيادة: +{EGP(overpaidAmt)}</p>
+                      ) : sale.total_amount !== sale.paid_amount ? (
                         <p className="text-xs text-amber-600 whitespace-nowrap">متبقي: {EGP(sale.total_amount - sale.paid_amount)}</p>
-                      )}
+                      ) : null}
                     </td>
                     <td className="px-4 py-3 hidden md:table-cell" style={{whiteSpace:'nowrap'}}>
                       {profit !== null ? <span className={cn('font-bold text-sm', profit >= 0 ? 'text-emerald-600' : 'text-red-500')}>{EGP(profit)}</span> : <span className="text-slate-300">—</span>}
@@ -681,63 +723,47 @@ const Sales = () => {
                     <td className="px-4 py-3 hidden sm:table-cell">
                       <span className={cn('text-xs px-2 py-1 rounded-lg border font-medium', cfg.className)}>{cfg.label}</span>
                     </td>
-                    {/* ══ أزرار الإجراءات المضمّنة ══ */}
                     <td className="px-3 py-3">
                       <div className="flex items-center justify-center gap-1">
-                        {/* معاينة — متاح للجميع */}
-                        <button
-                          type="button"
-                          onClick={() => setShowDetail(sale)}
-                          title="معاينة الفاتورة"
+                        <button type="button" onClick={() => setShowDetail(sale)} title="معاينة"
                           style={{ touchAction: 'manipulation', WebkitTapHighlightColor: 'transparent' }}
-                          className="inline-flex items-center justify-center w-9 h-9 rounded-xl bg-blue-50 hover:bg-blue-100 text-blue-600 transition-colors flex-shrink-0"
-                        >
+                          className="inline-flex items-center justify-center w-9 h-9 rounded-xl bg-blue-50 hover:bg-blue-100 text-blue-600 transition-colors flex-shrink-0">
                           <Eye className="w-4 h-4" style={{ pointerEvents: 'none' }} />
                         </button>
-                        {/* طباعة */}
-                        <button
-                          type="button"
-                          onClick={() => openSalePrint(sale)}
-                          title="طباعة الفاتورة"
+                        <button type="button" onClick={() => openSalePrint(sale)} title="طباعة"
                           style={{ touchAction: 'manipulation', WebkitTapHighlightColor: 'transparent' }}
-                          className="inline-flex items-center justify-center w-9 h-9 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-600 transition-colors flex-shrink-0"
-                        >
+                          className="inline-flex items-center justify-center w-9 h-9 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-600 transition-colors flex-shrink-0">
                           <Printer className="w-4 h-4" style={{ pointerEvents: 'none' }} />
                         </button>
-                        {/* تعديل — مديرون فقط */}
                         {canEdit ? (
-                          <button
-                            type="button"
-                            onClick={() => openEditSale(sale)}
-                            title="تعديل الفاتورة"
+                          <button type="button" onClick={() => openEditSale(sale)} title="تعديل"
                             style={{ touchAction: 'manipulation', WebkitTapHighlightColor: 'transparent' }}
-                            className="inline-flex items-center justify-center w-9 h-9 rounded-xl bg-amber-50 hover:bg-amber-100 text-amber-600 transition-colors flex-shrink-0"
-                          >
+                            className="inline-flex items-center justify-center w-9 h-9 rounded-xl bg-amber-50 hover:bg-amber-100 text-amber-600 transition-colors flex-shrink-0">
                             <Edit2 className="w-4 h-4" style={{ pointerEvents: 'none' }} />
                           </button>
                         ) : (
-                          <div className="inline-flex items-center justify-center w-9 h-9 rounded-xl bg-slate-50 text-slate-300 flex-shrink-0" title="تعديل الفواتير للمديرين فقط">
-                            <Lock className="w-3.5 h-3.5" style={{ pointerEvents: 'none' }} />
-                          </div>
+                          <div className="inline-flex items-center justify-center w-9 h-9 rounded-xl bg-slate-50 text-slate-300 flex-shrink-0"><Lock className="w-3.5 h-3.5" /></div>
                         )}
-                        {/* حذف — مديرون فقط */}
-                        {canDelete ? (
-                          <button
-                            type="button"
-                            onClick={() => {
-                              if (confirm(`حذف هذه الفاتورة؟\nسيتم إعادة جميع الكميات للمخزون تلقائياً.`))
-                                deleteMutation.mutate(sale);
-                            }}
-                            title="حذف الفاتورة"
+                        {/* دفعة — لكل الفواتير غير المكتملة */}
+                        {canPayment && sale.paid_amount < sale.total_amount && (
+                          <button type="button"
+                            onClick={() => { setShowPayment(sale); setPaymentForm({ amount: sale.total_amount - sale.paid_amount, notes: '', payment_date: today(), payment_method: 'كاش', wallet_from: '', wallet_to: '' }); }}
+                            title="تسجيل دفعة"
                             style={{ touchAction: 'manipulation', WebkitTapHighlightColor: 'transparent' }}
-                            className="inline-flex items-center justify-center w-9 h-9 rounded-xl bg-red-50 hover:bg-red-100 text-red-500 transition-colors flex-shrink-0"
-                          >
+                            className="inline-flex items-center justify-center w-9 h-9 rounded-xl bg-emerald-50 hover:bg-emerald-100 text-emerald-600 transition-colors flex-shrink-0">
+                            <CreditCard className="w-4 h-4" style={{ pointerEvents: 'none' }} />
+                          </button>
+                        )}
+                        {canDelete ? (
+                          <button type="button"
+                            onClick={() => { if (confirm(`حذف هذه الفاتورة؟\nسيتم إعادة جميع الكميات للمخزون تلقائياً.`)) deleteMutation.mutate(sale); }}
+                            title="حذف"
+                            style={{ touchAction: 'manipulation', WebkitTapHighlightColor: 'transparent' }}
+                            className="inline-flex items-center justify-center w-9 h-9 rounded-xl bg-red-50 hover:bg-red-100 text-red-500 transition-colors flex-shrink-0">
                             <Trash2 className="w-4 h-4" style={{ pointerEvents: 'none' }} />
                           </button>
                         ) : (
-                          <div className="inline-flex items-center justify-center w-9 h-9 rounded-xl bg-slate-50 text-slate-300 flex-shrink-0" title="حذف الفواتير للمديرين فقط">
-                            <Lock className="w-3.5 h-3.5" style={{ pointerEvents: 'none' }} />
-                          </div>
+                          <div className="inline-flex items-center justify-center w-9 h-9 rounded-xl bg-slate-50 text-slate-300 flex-shrink-0"><Lock className="w-3.5 h-3.5" /></div>
                         )}
                       </div>
                     </td>
@@ -771,14 +797,10 @@ const Sales = () => {
               <div className="grid grid-cols-2 gap-3 mb-5">
                 <div className="flex flex-col gap-1.5">
                   <label className="text-xs font-medium text-slate-600">العميل <span className="text-red-500">*</span></label>
-                  <select value={form.customer_id}
-                    onChange={e => setForm(p => ({ ...p, customer_id: e.target.value }))}
-                    className={cn(INPUT, !form.customer_id ? 'border-red-300' : '')}>
+                  <select value={form.customer_id} onChange={e => setForm(p => ({ ...p, customer_id: e.target.value }))} className={cn(INPUT, !form.customer_id ? 'border-red-300' : '')}>
                     <option value="">— اختر العميل —</option>
                     {customers.map((c: any) => (
-                      <option key={c.id} value={c.id}>
-                        {c.name}{(c.balance||0)>0 ? ` (دين: ${EGP(c.balance)})` : ''}
-                      </option>
+                      <option key={c.id} value={c.id}>{c.name}{(c.balance||0)>0 ? ` (دين: ${EGP(c.balance)})` : ''}</option>
                     ))}
                   </select>
                 </div>
@@ -792,15 +814,15 @@ const Sales = () => {
                   <label className="text-xs font-medium text-slate-600">الحالة</label>
                   <div className="flex gap-2 items-center">
                     <div className={cn('flex items-center gap-1.5 border rounded-xl py-2 px-3 text-sm font-semibold flex-1',
-                      liveStatus === 'مكتملة' ? 'bg-emerald-50 border-emerald-200 text-emerald-700' :
-                      liveStatus === 'آجل'    ? 'bg-blue-50 border-blue-200 text-blue-700' :
+                      liveStatus === 'كاملة' ? 'bg-emerald-50 border-emerald-200 text-emerald-700' :
+                      liveStatus === 'آجل'   ? 'bg-blue-50 border-blue-200 text-blue-700' :
                       liveStatus === 'جزئي'  ? 'bg-amber-50 border-amber-200 text-amber-700' :
                                                'bg-slate-100 border-slate-200 text-slate-600')}>
-                      {liveStatus === 'مكتملة' ? <CheckCircle className="w-4 h-4" /> : <Clock className="w-4 h-4" />}
+                      {liveStatus === 'كاملة' ? <CheckCircle className="w-4 h-4" /> : <Clock className="w-4 h-4" />}
                       {form.manual_status ? `يدوي: ${form.manual_status}` : `تلقائي: ${liveStatus}`}
+                      {overpaid && <span className="text-blue-600 text-xs font-bold mr-2">↑ دفع زيادة {EGP(form.paid_amount - totalAmount)}</span>}
                     </div>
-                    <select value={form.manual_status}
-                      onChange={e => setForm(p => ({ ...p, manual_status: e.target.value }))}
+                    <select value={form.manual_status} onChange={e => setForm(p => ({ ...p, manual_status: e.target.value }))}
                       className="border border-slate-200 rounded-xl py-2 px-3 text-xs text-slate-600 focus:outline-none focus:border-teal-400 bg-white">
                       <option value="">تلقائي</option>
                       <option value="كاملة">كاملة</option>
@@ -855,11 +877,33 @@ const Sales = () => {
                 </div>
               </div>
 
-              <div className="grid grid-cols-3 gap-3 mb-4">
-                <div className="flex flex-col gap-1.5"><label className="text-xs font-medium text-slate-600">خصم (ج.م)</label><input type="number" value={form.discount || ''} onChange={e => setForm(p => ({ ...p, discount: Number(e.target.value) }))} className={INPUT} /></div>
-                <div className="flex flex-col gap-1.5"><label className="text-xs font-medium text-slate-600">المدفوع (ج.م)</label><input type="number" value={form.paid_amount || ''} onChange={e => setForm(p => ({ ...p, paid_amount: Number(e.target.value) }))} className={INPUT} /></div>
-                <div className="flex flex-col gap-1.5"><label className="text-xs font-medium text-slate-600">الإجمالي</label><div className="bg-emerald-50 border border-emerald-200 rounded-xl py-2.5 px-3 text-sm text-emerald-700 font-bold">{EGP(totalAmount)}</div></div>
+              {/* الأرقام */}
+              <div className="grid grid-cols-2 gap-3 mb-3">
+                <div className="flex flex-col gap-1.5">
+                  <label className="text-xs font-medium text-slate-600">خصم (ج.م)</label>
+                  <input type="number" value={form.discount || ''} onChange={e => setForm(p => ({ ...p, discount: Number(e.target.value) }))} className={INPUT} />
+                </div>
+                <div className="flex flex-col gap-1.5">
+                  <label className="text-xs font-medium text-slate-600">مبلغ إضافي (ج.م)</label>
+                  <input type="number" value={form.extra_amount || ''} onChange={e => setForm(p => ({ ...p, extra_amount: Number(e.target.value) }))} className={INPUT} placeholder="توصيل، رسوم..." />
+                </div>
+                <div className="flex flex-col gap-1.5">
+                  <label className="text-xs font-medium text-slate-600">المدفوع (ج.م) — يُسمح بأكبر من الإجمالي</label>
+                  <input type="number" value={form.paid_amount || ''} onChange={e => setForm(p => ({ ...p, paid_amount: Number(e.target.value) }))} className={INPUT} />
+                </div>
+                <div className="flex flex-col gap-1.5">
+                  <label className="text-xs font-medium text-slate-600">الإجمالي النهائي</label>
+                  <div className="bg-emerald-50 border border-emerald-200 rounded-xl py-2.5 px-3 text-sm text-emerald-700 font-bold">{EGP(totalAmount)}</div>
+                </div>
               </div>
+
+              {/* إشعار دفع زيادة */}
+              {overpaid && (
+                <div className="flex items-center gap-2 bg-blue-50 border border-blue-200 rounded-xl px-4 py-2.5 mb-3">
+                  <AlertCircle className="w-4 h-4 text-blue-600 flex-shrink-0" />
+                  <p className="text-xs text-blue-700 font-semibold">دفع زيادة: +{EGP(form.paid_amount - totalAmount)} — سيظهر على الفاتورة</p>
+                </div>
+              )}
 
               <div className="mb-4">
                 <PaymentMethodSection
@@ -914,7 +958,7 @@ const Sales = () => {
                   onWalletTo={v => setPaymentForm(p => ({ ...p, wallet_to: v }))}
                 />
                 <div className="flex flex-col gap-1.5">
-                  <label className="text-xs font-medium text-slate-600">مبلغ الدفعة *</label>
+                  <label className="text-xs font-medium text-slate-600">مبلغ الدفعة * (يُسمح بأكبر من المتبقي)</label>
                   <input type="number" value={paymentForm.amount || ''} onChange={e => setPaymentForm(p => ({ ...p, amount: Number(e.target.value) }))} className={INPUT} />
                 </div>
                 <div className="flex flex-col gap-1.5">
@@ -955,9 +999,9 @@ const Sales = () => {
                 {[
                   ['الطرف', showDetail.customer_name || 'نقدي'],
                   ['التاريخ', showDetail.sale_date],
-                  ['النوع', (showDetail as any).invoice_type || 'بيع'],
                   ['الحالة', showDetail.status],
                   ['طريقة الدفع', (showDetail as any).payment_method || 'كاش'],
+                  ...(((showDetail as any).extra_amount || 0) > 0 ? [['مبلغ إضافي', EGP((showDetail as any).extra_amount)]] : []),
                   ...(((showDetail as any).payment_method === 'محفظة' && (showDetail as any).wallet_from) ? [['من رقم', (showDetail as any).wallet_from]] : []),
                   ...(((showDetail as any).payment_method === 'محفظة' && (showDetail as any).wallet_to) ? [['إلى رقم', (showDetail as any).wallet_to]] : []),
                 ].map(([k, v]) => (
@@ -983,8 +1027,12 @@ const Sales = () => {
               )}
               <div className="space-y-2 text-sm border-t border-slate-100 pt-4">
                 {(showDetail.discount || 0) > 0 && <div className="flex justify-between"><span className="text-slate-400">خصم:</span><span>- {EGP(showDetail.discount || 0)}</span></div>}
+                {((showDetail as any).extra_amount || 0) > 0 && <div className="flex justify-between text-orange-600"><span>مبلغ إضافي:</span><span>+ {EGP((showDetail as any).extra_amount)}</span></div>}
                 <div className="flex justify-between font-bold text-base"><span>الإجمالي:</span><span className="text-emerald-600">{EGP(showDetail.total_amount)}</span></div>
                 <div className="flex justify-between"><span className="text-slate-400">المدفوع:</span><span className="text-emerald-600">{EGP(showDetail.paid_amount)}</span></div>
+                {showDetail.paid_amount > showDetail.total_amount && (
+                  <div className="flex justify-between text-blue-600 font-semibold"><span>دفع زيادة:</span><span>+{EGP(showDetail.paid_amount - showDetail.total_amount)}</span></div>
+                )}
                 {showDetail.total_amount > showDetail.paid_amount && <div className="flex justify-between text-amber-600 font-semibold"><span>المتبقي:</span><span>{EGP(showDetail.total_amount - showDetail.paid_amount)}</span></div>}
               </div>
             </div>

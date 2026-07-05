@@ -20,6 +20,7 @@ const INPUT = 'w-full bg-white border border-slate-200 rounded-xl py-2.5 px-3 te
 const INPUT_SM = 'w-full bg-white border border-slate-200 rounded-lg py-1.5 px-2 text-xs text-slate-800 placeholder:text-slate-400 focus:outline-none focus:border-violet-400 transition-all';
 
 const calcStatus = (total: number, paid: number) => total <= 0 ? 'مكتملة' : paid <= 0 ? 'آجل' : paid >= total ? 'مكتملة' : 'جزئي';
+// تحديد الحالة مع السماح بالدفع الزائد
 
 const STATUS_CONFIG: Record<string, { label: string; bg: string; text: string; border: string }> = {
   'مكتملة': { label: 'مكتملة', bg: 'bg-emerald-50', text: 'text-emerald-700', border: 'border-emerald-200' },
@@ -109,7 +110,7 @@ const Purchases = () => {
   const [showPayment, setShowPayment] = useState<Purchase | null>(null);
   const [purchaseItems, setPurchaseItems] = useState<FormItem[]>([]);
   const [form, setForm] = useState({
-    supplier_id: '', supplier_name: '', paid_amount: 0, notes: '', purchase_date: today(),
+    supplier_id: '', supplier_name: '', paid_amount: 0, extra_amount: 0, notes: '', purchase_date: today(),
     payment_method: 'كاش' as 'كاش' | 'محفظة',
     wallet_from: '', wallet_to: '',
   });
@@ -139,13 +140,16 @@ const Purchases = () => {
   const addMutation = useMutation({
     mutationFn: async () => {
       if (!form.supplier_id) throw new Error('يرجى اختيار المورد');
-      const total = purchaseItems.reduce((s, i) => s + i.total_price, 0);
-      const autoStatus = calcStatus(total, form.paid_amount);
-      const remaining = total - form.paid_amount;
+      const itemsTotal = purchaseItems.reduce((s, i) => s + i.total_price, 0);
+      const total = itemsTotal + (form.extra_amount || 0);
+      const cashPaidNow = Math.max(0, form.paid_amount);
+      const autoStatus = cashPaidNow >= total && total > 0 ? 'مكتملة' : calcStatus(total, cashPaidNow);
+      const remaining = Math.max(0, total - cashPaidNow);
       const { data: pData, error: pErr } = await supabase.from('purchases').insert({
         supplier_id: form.supplier_id || null,
         supplier_name: form.supplier_name || suppliers.find((s: any) => s.id === form.supplier_id)?.name || 'مورد غير محدد',
-        total_amount: total, paid_amount: form.paid_amount, status: autoStatus, notes: form.notes, purchase_date: form.purchase_date,
+        total_amount: total, paid_amount: cashPaidNow, status: autoStatus, notes: form.notes, purchase_date: form.purchase_date,
+        extra_amount: form.extra_amount || 0,
         payment_method: form.payment_method,
         wallet_from: form.payment_method === 'محفظة' ? form.wallet_from : null,
         wallet_to: form.payment_method === 'محفظة' ? form.wallet_to : null,
@@ -231,13 +235,17 @@ const Purchases = () => {
   const paymentMutation = useMutation({
     mutationFn: async () => {
       if (!showPayment) return;
+      if (paymentForm.amount <= 0) throw new Error('يرجى إدخال مبلغ صحيح أكبر من صفر');
       const newPaid = showPayment.paid_amount + paymentForm.amount;
-      const remaining = showPayment.total_amount - showPayment.paid_amount;
-      if (paymentForm.amount > remaining) throw new Error(`المبلغ أكبر من المتبقي (${EGP(remaining)})`);
-      await supabase.from('purchases').update({ paid_amount: newPaid, status: calcStatus(showPayment.total_amount, newPaid) }).eq('id', showPayment.id);
+      const newStatus = newPaid >= showPayment.total_amount ? 'مكتملة' : newPaid > 0 ? 'جزئي' : 'آجل';
+      await supabase.from('purchases').update({ paid_amount: newPaid, status: newStatus }).eq('id', showPayment.id);
       if (showPayment.supplier_id) {
-        const { data: sup } = await supabase.from('suppliers').select('balance').eq('id', showPayment.supplier_id).single();
-        if (sup) await supabase.from('suppliers').update({ balance: Math.max(0, (sup.balance || 0) - paymentForm.amount) }).eq('id', showPayment.supplier_id);
+        const prevRemaining = Math.max(0, showPayment.total_amount - showPayment.paid_amount);
+        const deductAmt = Math.min(paymentForm.amount, prevRemaining);
+        if (deductAmt > 0) {
+          const { data: sup } = await supabase.from('suppliers').select('balance').eq('id', showPayment.supplier_id).single();
+          if (sup) await supabase.from('suppliers').update({ balance: Math.max(0, (sup.balance || 0) - deductAmt) }).eq('id', showPayment.supplier_id);
+        }
         await supabase.from('supplier_payments').insert({ supplier_id: showPayment.supplier_id, supplier_name: showPayment.supplier_name, amount: paymentForm.amount, notes: paymentForm.notes || '', payment_date: paymentForm.payment_date });
       }
     },
@@ -319,8 +327,10 @@ const Purchases = () => {
     return mS && mSt && mD;
   }), [purchases, search, filterStatus, rangeFrom, rangeTo]);
 
-  const totalAmount = purchaseItems.reduce((s, i) => s + i.total_price, 0);
-  const autoStatus = calcStatus(totalAmount, form.paid_amount);
+  const itemsSubtotal = purchaseItems.reduce((s, i) => s + i.total_price, 0);
+  const totalAmount = itemsSubtotal + (form.extra_amount || 0);
+  const overpaidPurch = form.paid_amount > totalAmount && totalAmount > 0;
+  const autoStatus = form.paid_amount >= totalAmount && totalAmount > 0 ? 'مكتملة' : calcStatus(totalAmount, form.paid_amount);
   const deferredTotal = purchases.filter(p => p.status === 'آجل' || p.status === 'جزئي').reduce((s, x) => s + (x.total_amount - x.paid_amount), 0);
   const deferredCount = purchases.filter(p => p.status === 'آجل' || p.status === 'جزئي').length;
 
@@ -408,7 +418,7 @@ const Purchases = () => {
         </div>
         {canCreate && (
           <button className="flex items-center gap-2 px-4 py-2.5 bg-violet-600 hover:bg-violet-700 text-white rounded-xl text-sm font-semibold transition-all"
-            onClick={() => { interact('add'); setPurchaseItems([]); setForm({ supplier_id: '', supplier_name: '', paid_amount: 0, notes: '', purchase_date: today(), payment_method: 'كاش', wallet_from: '', wallet_to: '' }); setShowForm(true); }}>
+            onClick={() => { interact('add'); setPurchaseItems([]); setForm({ supplier_id: '', supplier_name: '', paid_amount: 0, extra_amount: 0, notes: '', purchase_date: today(), payment_method: 'كاش', wallet_from: '', wallet_to: '' }); setShowForm(true); }}>
             <Plus className="w-4 h-4" /><span>أمر شراء جديد</span>
           </button>
         )}
@@ -695,10 +705,16 @@ const Purchases = () => {
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-3 mb-4">
-                <div className="flex flex-col gap-1.5"><label className="text-xs font-medium text-slate-600">المدفوع (ج.م)</label><input type="number" value={form.paid_amount || ''} onChange={e => setForm(p => ({ ...p, paid_amount: Number(e.target.value) }))} className={INPUT} /></div>
-                <div className="flex flex-col gap-1.5"><label className="text-xs font-medium text-slate-600">الإجمالي</label><div className="bg-violet-50 border border-violet-200 rounded-xl py-2.5 px-3 text-sm text-violet-700 font-bold">{EGP(totalAmount)}</div></div>
+              <div className="grid grid-cols-2 gap-3 mb-3">
+                <div className="flex flex-col gap-1.5"><label className="text-xs font-medium text-slate-600">مبلغ إضافي (ج.م)</label><input type="number" value={form.extra_amount || ''} onChange={e => setForm(p => ({ ...p, extra_amount: Number(e.target.value) }))} placeholder="رسوم، توصيل..." className={INPUT} /></div>
+                <div className="flex flex-col gap-1.5"><label className="text-xs font-medium text-slate-600">المدفوع (ج.م) — يُسمح أكبر من الإجمالي</label><input type="number" value={form.paid_amount || ''} onChange={e => setForm(p => ({ ...p, paid_amount: Number(e.target.value) }))} className={INPUT} /></div>
+                <div className="flex flex-col gap-1.5"><label className="text-xs font-medium text-slate-600">الإجمالي النهائي</label><div className="bg-violet-50 border border-violet-200 rounded-xl py-2.5 px-3 text-sm text-violet-700 font-bold">{EGP(totalAmount)}</div></div>
               </div>
+              {overpaidPurch && (
+                <div className="flex items-center gap-2 bg-blue-50 border border-blue-200 rounded-xl px-4 py-2.5 mb-3">
+                  <span className="text-xs text-blue-700 font-semibold">دفع زيادة: +{EGP(form.paid_amount - totalAmount)} — سيظهر على الفاتورة</span>
+                </div>
+              )}
 
               {/* طريقة الدفع */}
               <div className="mb-4">

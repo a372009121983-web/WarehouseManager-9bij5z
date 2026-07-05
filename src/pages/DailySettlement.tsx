@@ -59,7 +59,8 @@ const DailySettlement = () => {
   const { data: sales = [], isLoading, refetch } = useQuery({
     queryKey: ['settlement-sales', selectedDate],
     queryFn: async () => {
-      // جلب فواتير يوم المحدد + كل الفواتير الآجلة المترحّلة من أيام سابقة
+      // جلب فواتير اليوم المحدد + كل الفواتير الآجلة المترحّلة من أيام سابقة
+      // الفواتير المعلقة لليوم الحالي + المؤجلة من أيام سابقة
       const { data, error } = await supabase
         .from('sales')
         .select('*, sale_items(id, product_name, quantity, unit, unit_price, total_price)')

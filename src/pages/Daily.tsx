@@ -130,13 +130,14 @@ const Daily = () => {
     refetchOnWindowFocus: true,
   });
 
-  /* ── تحويل الفواتير المعلقة القديمة إلى مؤجلة تلقائياً ── */
+  /* ── تحويل الفواتير المعلقة والآجلة القديمة إلى مؤجلة تلقائياً عند انتهاء اليوم ── */
   useEffect(() => {
     const convertOldPending = async () => {
+      // تحويل معلقة وآجل من أيام سابقة إلى مؤجلة
       await supabase
         .from('sales')
         .update({ status: 'مؤجلة' })
-        .eq('status', 'معلقة')
+        .in('status', ['معلقة', 'آجل'])
         .lt('sale_date', selectedDate);
     };
     convertOldPending();
@@ -881,7 +882,8 @@ const Daily = () => {
                                 <button
                                   onClick={() => {
                                     interact('click');
-                                    window.location.href = '/settlement';
+                                    // فتح صفحة التسوية مع pre-select للفاتورة
+                                    window.location.href = `/settlement?date=${sale.sale_date}`;
                                   }}
                                   className="w-7 h-7 bg-amber-50 hover:bg-amber-100 text-amber-600 rounded-lg border border-amber-200 flex items-center justify-center mx-auto transition-all" title="تعديل الفاتورة">
                                   <Edit2 className="w-3 h-3" />
