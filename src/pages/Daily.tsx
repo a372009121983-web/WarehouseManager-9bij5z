@@ -1,6 +1,6 @@
-import { useState, useMemo, useEffect } from 'react';
+import { useState, useMemo, useEffect, useCallback } from 'react';
 import {
-  BookOpen, Trash2, Printer, Edit2,
+  BookOpen, Trash2, Printer, Edit2, Save, Plus, X as XIcon,
   TrendingUp, TrendingDown, Wallet, CreditCard,
   ArrowUpCircle, Clock, DollarSign,
   Building2, ChevronDown, ChevronUp, FileDown, Smartphone,
@@ -50,6 +50,10 @@ const Daily = () => {
   const [editingOpening, setEditingOpening] = useState(false);
   const [openingInput, setOpeningInput]     = useState('0');
   const [showDeferredDetail, setShowDeferredDetail] = useState(false);
+  const [editingDailyInvoice, setEditingDailyInvoice] = useState<any | null>(null);
+  const [dailyEditForm, setDailyEditForm] = useState<{ paid_amount: number; total_amount: number; discount: number; status: string; notes: string }>({ paid_amount: 0, total_amount: 0, discount: 0, status: 'كاملة', notes: '' });
+  const [dailyEditItems, setDailyEditItems] = useState<Array<{ id: string; product_name: string; quantity: number; unit: string; unit_price: number; total_price: number }>>([]);
+  let _dailyItemId = 0;
 
   const isReadOnly = profile?.role === 'boss';
 
@@ -342,6 +346,91 @@ const Daily = () => {
   const cashOnHand = totalMoneyIn - totalMoneyOut;
 
   /* ── Mutations ── */
+  const openDailyEdit = useCallback((sale: any) => {
+    setEditingDailyInvoice(sale);
+    setDailyEditForm({
+      paid_amount: sale.paid_amount || 0,
+      total_amount: sale.total_amount || 0,
+      discount: sale.discount || 0,
+      status: sale.status || 'معلقة',
+      notes: sale.notes || '',
+    });
+    const items = (sale.sale_items || []).map((it: any) => ({
+      id: `ei-${++_dailyItemId}`,
+      product_name: it.product_name || '',
+      quantity: it.quantity || 1,
+      unit: it.unit || '',
+      unit_price: it.unit_price || 0,
+      total_price: it.total_price || 0,
+    }));
+    setDailyEditItems(items);
+  }, []);
+
+  const saveDailyEditMutation = useMutation({
+    mutationFn: async () => {
+      if (!editingDailyInvoice) return;
+      const itemsTotal = dailyEditItems.length > 0
+        ? dailyEditItems.reduce((s, it) => s + it.total_price, 0)
+        : dailyEditForm.total_amount;
+      const finalTotal = Math.max(0, itemsTotal - (dailyEditForm.discount || 0));
+      const autoStatus = dailyEditForm.paid_amount >= finalTotal ? 'كاملة'
+        : dailyEditForm.paid_amount > 0 ? 'جزئي' : dailyEditForm.status;
+      const { error: sErr } = await supabase.from('sales').update({
+        paid_amount: dailyEditForm.paid_amount,
+        total_amount: finalTotal,
+        discount: dailyEditForm.discount,
+        status: autoStatus,
+        notes: dailyEditForm.notes,
+      }).eq('id', editingDailyInvoice.id);
+      if (sErr) throw sErr;
+      if (dailyEditItems.length > 0) {
+        await supabase.from('sale_items').delete().eq('sale_id', editingDailyInvoice.id);
+        const rows = dailyEditItems.map(it => ({
+          sale_id: editingDailyInvoice.id,
+          product_name: it.product_name,
+          quantity: it.quantity,
+          unit: it.unit,
+          unit_price: it.unit_price,
+          total_price: it.total_price,
+        }));
+        const { error: iErr } = await supabase.from('sale_items').insert(rows);
+        if (iErr) throw iErr;
+      }
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['daily-sales', selectedDate] });
+      qc.invalidateQueries({ queryKey: ['sales'] });
+      interact('success');
+      toast.success('تم تحديث الفاتورة بنجاح');
+      setEditingDailyInvoice(null);
+    },
+    onError: (e: Error) => { interact('error'); toast.error(e.message); },
+  });
+
+  const addDailyEditItem = () => {
+    setDailyEditItems(prev => [...prev, { id: `ei-${++_dailyItemId}`, product_name: '', quantity: 1, unit: '', unit_price: 0, total_price: 0 }]);
+  };
+  const updateDailyEditItem = (id: string, field: string, value: string | number) => {
+    setDailyEditItems(prev => prev.map(it => {
+      if (it.id !== id) return it;
+      const u = { ...it, [field]: value };
+      if (field === 'quantity' || field === 'unit_price') {
+        u.total_price = (field === 'quantity' ? Number(value) : u.quantity) * (field === 'unit_price' ? Number(value) : u.unit_price);
+        const newItemsTotal = prev.map(x => x.id === id ? u : x).reduce((s, x) => s + x.total_price, 0);
+        setDailyEditForm(f => ({ ...f, total_amount: newItemsTotal }));
+      }
+      return u;
+    }));
+  };
+  const removeDailyEditItem = (id: string) => {
+    setDailyEditItems(prev => {
+      const updated = prev.filter(it => it.id !== id);
+      const newTotal = updated.reduce((s, it) => s + it.total_price, 0);
+      setDailyEditForm(f => ({ ...f, total_amount: newTotal }));
+      return updated;
+    });
+  };
+
   const addExpenseMutation = useMutation({
     mutationFn: async () => {
       const { error } = await supabase.from('expenses').insert({ ...expenseForm, expense_date: selectedDate });
@@ -1321,6 +1410,112 @@ const Daily = () => {
                 {addExpenseMutation.isPending ? 'جاري...' : 'إضافة المصروف'}
               </button>
               <button className="flex-1 btn-secondary" onClick={() => setShowExpenseForm(false)}>إلغاء</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ══ Inline Edit Invoice Modal ══ */}
+      {editingDailyInvoice && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-start justify-center p-4 overflow-y-auto">
+          <div className="bg-white w-full max-w-lg rounded-2xl shadow-2xl border border-slate-100 animate-fade-up my-4">
+            <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100">
+              <div className="flex items-center gap-3">
+                <div className="w-9 h-9 bg-amber-500 rounded-xl flex items-center justify-center"><Edit2 className="w-4 h-4 text-white" /></div>
+                <div>
+                  <h2 className="text-base font-bold text-slate-800">تعديل الفاتورة</h2>
+                  <p className="text-xs text-slate-400">{editingDailyInvoice.customer_name || 'عميل نقدي'}</p>
+                </div>
+              </div>
+              <button className="w-8 h-8 bg-slate-100 hover:bg-slate-200 text-slate-500 rounded-xl flex items-center justify-center"
+                onClick={() => setEditingDailyInvoice(null)}><XIcon className="w-4 h-4" /></button>
+            </div>
+            <div className="p-5 space-y-4">
+              {/* أصناف */}
+              <div>
+                <div className="flex items-center justify-between mb-2">
+                  <p className="text-sm font-bold text-slate-700">أصناف الفاتورة</p>
+                  <button onClick={addDailyEditItem}
+                    className="flex items-center gap-1 px-2.5 py-1.5 bg-amber-100 hover:bg-amber-200 text-amber-700 rounded-xl text-xs font-semibold border border-amber-200">
+                    <Plus className="w-3 h-3" />إضافة صنف
+                  </button>
+                </div>
+                <div className="space-y-2 max-h-56 overflow-y-auto">
+                  {dailyEditItems.map(item => (
+                    <div key={item.id} className="bg-amber-50 border border-amber-200 rounded-xl p-2.5 space-y-1.5">
+                      <input type="text" placeholder="اسم الصنف" value={item.product_name}
+                        onChange={e => updateDailyEditItem(item.id, 'product_name', e.target.value)}
+                        className="w-full bg-white border border-amber-200 rounded-lg py-1.5 px-2 text-xs focus:outline-none" />
+                      <div className="grid grid-cols-12 gap-1.5 items-center">
+                        <input type="number" placeholder="الكمية" value={item.quantity || ''}
+                          onChange={e => updateDailyEditItem(item.id, 'quantity', Number(e.target.value))}
+                          className="col-span-3 bg-white border border-amber-200 rounded-lg py-1.5 px-2 text-xs focus:outline-none" />
+                        <input type="text" placeholder="الوحدة" value={item.unit}
+                          onChange={e => updateDailyEditItem(item.id, 'unit', e.target.value)}
+                          className="col-span-2 bg-white border border-amber-200 rounded-lg py-1.5 px-2 text-xs focus:outline-none" />
+                        <input type="number" placeholder="السعر" value={item.unit_price || ''}
+                          onChange={e => updateDailyEditItem(item.id, 'unit_price', Number(e.target.value))}
+                          className="col-span-4 bg-white border border-amber-200 rounded-lg py-1.5 px-2 text-xs focus:outline-none" />
+                        <span className="col-span-2 text-[10px] font-bold text-amber-700 text-center">
+                          {item.total_price > 0 ? EGP(item.total_price) : '—'}
+                        </span>
+                        <button onClick={() => removeDailyEditItem(item.id)}
+                          className="col-span-1 w-6 h-6 bg-red-50 hover:bg-red-100 text-red-400 rounded-lg flex items-center justify-center">
+                          <Trash2 className="w-3 h-3" />
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                  {dailyEditItems.length === 0 && (
+                    <div className="text-center py-6 text-slate-400 text-xs border-2 border-dashed border-amber-200 rounded-xl bg-amber-50/30">
+                      اضغط "إضافة صنف" لتعديل أصناف الفاتورة
+                    </div>
+                  )}
+                </div>
+              </div>
+              {/* التفاصيل */}
+              <div className="grid grid-cols-2 gap-3">
+                <div className="flex flex-col gap-1">
+                  <label className="text-xs font-medium text-slate-600">المدفوع (ج.م)</label>
+                  <input type="number" value={dailyEditForm.paid_amount || ''}
+                    onChange={e => setDailyEditForm(p => ({ ...p, paid_amount: Number(e.target.value) }))}
+                    className="bg-white border border-slate-200 rounded-xl py-2 px-3 text-sm focus:outline-none focus:border-amber-400" />
+                </div>
+                <div className="flex flex-col gap-1">
+                  <label className="text-xs font-medium text-slate-600">الخصم (ج.م)</label>
+                  <input type="number" value={dailyEditForm.discount || ''}
+                    onChange={e => setDailyEditForm(p => ({ ...p, discount: Number(e.target.value) }))}
+                    className="bg-white border border-slate-200 rounded-xl py-2 px-3 text-sm focus:outline-none focus:border-amber-400" />
+                </div>
+              </div>
+              {/* ملخص */}
+              <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 space-y-1 text-xs">
+                {dailyEditItems.length > 0 && (
+                  <div className="flex justify-between"><span className="text-slate-500">إجمالي الأصناف:</span><span className="font-bold">{EGP(dailyEditItems.reduce((s,i)=>s+i.total_price,0))}</span></div>
+                )}
+                <div className="flex justify-between font-bold border-t border-amber-200 pt-1">
+                  <span>الإجمالي بعد الخصم:</span>
+                  <span className="text-amber-700">{EGP(Math.max(0, (dailyEditItems.length > 0 ? dailyEditItems.reduce((s,i)=>s+i.total_price,0) : dailyEditForm.total_amount) - (dailyEditForm.discount||0)))}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-slate-500">الحالة بعد التعديل:</span>
+                  <span className={cn('font-bold px-1.5 py-0.5 rounded text-[10px]',
+                    dailyEditForm.paid_amount >= Math.max(0,(dailyEditItems.length>0?dailyEditItems.reduce((s,i)=>s+i.total_price,0):dailyEditForm.total_amount)-(dailyEditForm.discount||0))
+                      ? 'bg-emerald-100 text-emerald-700' : dailyEditForm.paid_amount > 0 ? 'bg-amber-100 text-amber-700' : 'bg-red-100 text-red-700')}>
+                    {dailyEditForm.paid_amount >= Math.max(0,(dailyEditItems.length>0?dailyEditItems.reduce((s,i)=>s+i.total_price,0):dailyEditForm.total_amount)-(dailyEditForm.discount||0)) ? 'كاملة ✓' : dailyEditForm.paid_amount > 0 ? 'جزئي' : 'معلقة'}
+                  </span>
+                </div>
+              </div>
+            </div>
+            <div className="flex gap-3 px-5 pb-5">
+              <button
+                onClick={() => saveDailyEditMutation.mutate()}
+                disabled={saveDailyEditMutation.isPending}
+                className="flex-1 flex items-center justify-center gap-2 py-2.5 bg-amber-500 hover:bg-amber-600 text-white rounded-xl text-sm font-bold transition-all disabled:opacity-60">
+                <Save className="w-3.5 h-3.5" />{saveDailyEditMutation.isPending ? 'جاري...' : 'حفظ التعديلات'}
+              </button>
+              <button onClick={() => setEditingDailyInvoice(null)}
+                className="flex-1 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-xl text-sm transition-all">إلغاء</button>
             </div>
           </div>
         </div>

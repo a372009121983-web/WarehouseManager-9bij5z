@@ -30,7 +30,7 @@ const Customers = () => {
   const [editForm, setEditForm] = useState({ name: '', phone: '', location: '', notes: '', max_debt_limit: 0, balance: 0 });
   const [showForm, setShowForm] = useState(false);
   const [importProgress, setImportProgress] = useState<{ active: boolean; current: number; total: number }>({ active: false, current: 0, total: 0 });
-  const emptyForm = { name: '', phone: '', location: '', notes: '', max_debt_limit: 0, password: '', initial_balance: 0 };
+  const emptyForm = { name: '', phone: '', location: '', notes: '', max_debt_limit: 0, initial_balance: 0 };
   const [form, setForm] = useState(emptyForm);
 
   const { data: customers = [], isLoading } = useQuery({
@@ -41,7 +41,7 @@ const Customers = () => {
 
   const addMutation = useMutation({
     mutationFn: async (p: typeof emptyForm) => {
-      const { initial_balance, password, ...rest } = p;
+      const { initial_balance, ...rest } = p;
       const { error } = await supabase.from('customers').insert({
         ...rest,
         balance: Number(initial_balance) || 0,
@@ -295,7 +295,7 @@ const Customers = () => {
               <h2 className="text-base font-bold text-slate-800">إضافة عميل جديد</h2>
             </div>
             <div className="p-6 space-y-3">
-              {[{ label: 'اسم العميل *', key: 'name', placeholder: 'أدخل اسم العميل' }, { label: 'رقم الهاتف', key: 'phone', placeholder: 'رقم التواصل (يُستخدم لتسجيل الدخول)' }, { label: 'الموقع', key: 'location', placeholder: 'العنوان' }, { label: 'ملاحظات', key: 'notes', placeholder: 'ملاحظات إضافية' }].map(({ label, key, placeholder }) => (
+              {[{ label: 'اسم العميل *', key: 'name', placeholder: 'أدخل اسم العميل' }, { label: 'رقم الهاتف', key: 'phone', placeholder: 'رقم التواصل' }, { label: 'الموقع', key: 'location', placeholder: 'العنوان' }, { label: 'ملاحظات', key: 'notes', placeholder: 'ملاحظات إضافية' }].map(({ label, key, placeholder }) => (
                 <div key={key} className="flex flex-col gap-1.5">
                   <label className="text-xs font-medium text-slate-600">{label}</label>
                   <input type="text" value={String(form[key as keyof typeof form])} onChange={e => setForm(p => ({ ...p, [key]: e.target.value }))} placeholder={placeholder} className={INPUT} />
@@ -315,18 +315,7 @@ const Customers = () => {
                   أدخل مبلغ المديونية المستحقة عليه — موجب = مدين | سالب = دائن
                 </p>
               </div>
-              <div className="flex flex-col gap-1.5">
-                <label className="text-xs font-medium text-slate-600 flex items-center gap-1.5">
-                  <span className="w-4 h-4 bg-amber-100 rounded flex items-center justify-center text-amber-700 text-[10px]">🔑</span>
-                  كلمة مرور العميل (للدخول للنظام)
-                </label>
-                <input type="password" value={form.password} onChange={e => setForm(p => ({ ...p, password: e.target.value }))} placeholder="اتركه فارغاً إذا لم يحتاج للدخول" className={INPUT} />
-                {form.phone && form.password && (
-                  <p className="text-[11px] text-blue-600 bg-blue-50 border border-blue-200 rounded-lg px-2 py-1">
-                    الدخول برقم الهاتف: <strong>{form.phone}</strong> + كلمة المرور المدخلة
-                  </p>
-                )}
-              </div>
+
             </div>
             <div className="flex gap-3 px-6 pb-6">
               <button className={cn(BTN_PRIMARY, 'flex-1')} onClick={() => { if (!form.name) { toast.error('يرجى إدخال الاسم'); return; } addMutation.mutate(form); }} disabled={addMutation.isPending}>إضافة</button>

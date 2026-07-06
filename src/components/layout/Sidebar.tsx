@@ -4,7 +4,7 @@ import {
   LayoutDashboard, Package, BarChart3, Bell, Settings, X,
   Archive, ShoppingCart, ShoppingBag, RotateCcw, BookOpen,
   Users, Truck, ReceiptText, UserCheck, AlertTriangle,
-  CreditCard, LogOut, Store, CheckCircle2,
+  CreditCard, LogOut, Store, CheckCircle2, Crown,
 } from 'lucide-react';
 import { useInteraction } from '@/hooks/useInteraction';
 import { cn } from '@/lib/utils';
@@ -33,12 +33,13 @@ const allNavItems = [
   { path: '/alerts',      icon: Bell,             label: 'التنبيهات',       roles: ['admin','warehouse_manager','boss'] },
   { path: '/my-account',  icon: CreditCard,       label: 'حسابي',           roles: ['worker'] },
   { path: '/settings',    icon: Settings,         label: 'الإعدادات',       roles: ['admin','warehouse_manager'] },
+  { path: '/users',       icon: Crown,            label: 'إدارة المستخدمين', roles: ['admin','warehouse_manager','boss','worker','driver'] },
 ];
 
 const GROUPS = [
   { label: 'المخزن',    paths: ['/', '/inventory', '/products', '/showrooms'], color: '#4da8a8' },
   { label: 'التجارة',   paths: ['/sales', '/purchases', '/returns', '/daily', '/settlement', '/customers', '/suppliers', '/expenses'], color: '#60a5fa' },
-  { label: 'الإدارة',   paths: ['/damages', '/workers', '/reports', '/ai', '/alerts', '/my-account', '/settings'], color: '#a78bfa' },
+  { label: 'الإدارة',   paths: ['/damages', '/workers', '/reports', '/ai', '/alerts', '/my-account', '/settings', '/users'], color: '#a78bfa' },
 ];
 
 const Sidebar = ({ open, onClose }: SidebarProps) => {
@@ -53,7 +54,14 @@ const Sidebar = ({ open, onClose }: SidebarProps) => {
     driver: 'سائق', worker: 'عامل', boss: 'الرئيس',
   };
 
-  const navItems = allNavItems.filter(item => item.roles.includes(role));
+  const navItems = allNavItems.filter(item => {
+    // صفحة إدارة المستخدمين تظهر فقط لصاحب الحساب 01278764440
+    if (item.path === '/users') {
+      const userEmail = profile?.email || '';
+      return userEmail === '01278764440@wms.local';
+    }
+    return item.roles.includes(role);
+  });
 
   const { data: unreadCount = 0 } = useQuery({
     queryKey: ['alerts-unread'],

@@ -75,7 +75,7 @@ const Sales = () => {
 
   const [search, setSearch] = useState('');
   const [filterStatus, setFilterStatus] = useState('الكل');
-  const [dateFilter, setDateFilter] = useState('الكل');
+  const [dateFilter, setDateFilter] = useState('اليوم');
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
   const [showForm, setShowForm] = useState(false);

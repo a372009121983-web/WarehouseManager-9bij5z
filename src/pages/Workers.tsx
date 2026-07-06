@@ -242,6 +242,35 @@ const Workers = () => {
   };
 
   const currentMonthPrefix = new Date().toISOString().slice(0, 7);
+
+  // تصفير القبض يدوياً في بداية الشهر
+  const manualResetMutation = useMutation({
+    mutationFn: async (worker: Worker) => {
+      const name = worker.full_name || worker.username || worker.email;
+      // إنشاء معاملة تصفير مع ملاحظة
+      const { error } = await supabase.from('worker_transactions').insert({
+        worker_id: worker.id,
+        worker_name: name,
+        type: 'تصفير',
+        amount: 0,
+        notes: `تصفير يدوي للقبض — ${currentMonthPrefix}`,
+        transaction_date: new Date().toISOString().split('T')[0],
+      });
+      if (error) throw error;
+      // حذف معاملات القبض للشهر الحالي فقط
+      await supabase.from('worker_transactions')
+        .delete()
+        .eq('worker_id', worker.id)
+        .eq('type', 'قبض')
+        .like('transaction_date', `${currentMonthPrefix}%`);
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['worker-transactions'] });
+      interact('success');
+      toast.success('تم تصفير القبض لهذا الشهر');
+    },
+    onError: (e: Error) => { interact('error'); toast.error(e.message); },
+  });
   const getWorkerTxns = (wid: string) => transactions.filter(t => t.worker_id === wid);
 
   const getWorkerBalance = (wid: string) => {
@@ -449,6 +478,12 @@ const Workers = () => {
                         </button>
                       ) : null;
                     })()}
+                    {canEditWorker && collected > 0 && (
+                      <button className="w-full icon-btn gap-1 py-1.5 bg-red-50 text-red-700 hover:bg-red-100 text-xs rounded-xl border border-red-200"
+                        onClick={() => { if (confirm(`تصفير قبض ${worker.full_name || worker.username} لهذا الشهر؟`)) manualResetMutation.mutate(worker); }}>
+                        <span>⟳ تصفير القبض الشهري</span>
+                      </button>
+                    )}
                     {isAdmin && (
                       <button className={cn('flex-1 icon-btn gap-1 py-1.5 text-xs rounded-xl border',
                         isActive ? 'bg-muted text-muted-foreground hover:bg-amber-50 hover:text-amber-600 border-border' : 'bg-emerald-50 text-emerald-600 border-emerald-200')}

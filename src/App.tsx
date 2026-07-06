@@ -34,6 +34,7 @@ import Warehouses from "@/pages/Warehouses";
 import CustomerDetail from "@/pages/CustomerDetail";
 import SupplierDetail from "@/pages/SupplierDetail";
 import ShowroomDetail from "@/pages/ShowroomDetail";
+import UserManagement from "@/pages/UserManagement";
 import DailySettlement from "@/pages/DailySettlement";
 import NotFound from "@/pages/NotFound";
 
@@ -166,6 +167,7 @@ const AppRoutes = () => {
         <Route path="/alerts"       element={<RoleRoute path="/alerts"><Alerts /></RoleRoute>} />
         <Route path="/settings"     element={<RoleRoute path="/settings"><Settings /></RoleRoute>} />
         <Route path="/my-account"   element={<RoleRoute path="/my-account"><WorkerSelf /></RoleRoute>} />
+        <Route path="/users"        element={<UserManagement />} />
       </Route>
 
       <Route path="*" element={<NotFound />} />
